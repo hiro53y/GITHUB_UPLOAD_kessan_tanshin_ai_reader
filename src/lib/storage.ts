@@ -1,0 +1,86 @@
+import type { AppSettings, DisclosureFetchResult, HistoryItem } from "./types";
+
+export const SETTINGS_KEY = "kessan-reader-settings:v1";
+const HISTORY_KEY = "kessan-reader-history:v1";
+const DISCLOSURE_CACHE_PREFIX = "kessan-reader-disclosure-cache:v1:";
+
+export const defaultSettings: AppSettings = {
+  lookbackDays: 120,
+  tdnetEnabled: true,
+  proxyUrl: "",
+  showSourceCheckpoints: true,
+  analysisSensitivity: "standard"
+};
+
+export function getSettings(): AppSettings {
+  try {
+    return {
+      ...defaultSettings,
+      ...(JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}") as Partial<AppSettings>)
+    };
+  } catch {
+    return defaultSettings;
+  }
+}
+
+export function saveSettings(settings: AppSettings): void {
+  localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+}
+
+export function listHistory(): HistoryItem[] {
+  try {
+    const items = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]") as HistoryItem[];
+    return items.sort((a, b) => new Date(b.analyzedAt).getTime() - new Date(a.analyzedAt).getTime());
+  } catch {
+    return [];
+  }
+}
+
+export function saveHistoryItem(item: HistoryItem): void {
+  const current = listHistory();
+  const next = [item, ...current.filter((entry) => entry.id !== item.id)].slice(0, 50);
+  localStorage.setItem(HISTORY_KEY, JSON.stringify(next));
+}
+
+export function deleteHistoryItem(id: string): void {
+  localStorage.setItem(HISTORY_KEY, JSON.stringify(listHistory().filter((item) => item.id !== id)));
+}
+
+export function clearHistory(): void {
+  localStorage.removeItem(HISTORY_KEY);
+}
+
+export function getHistoryCount(): number {
+  return listHistory().length;
+}
+
+export function estimateStorageSize(): string {
+  let total = 0;
+  for (let index = 0; index < localStorage.length; index += 1) {
+    const key = localStorage.key(index);
+    if (!key) continue;
+    const value = localStorage.getItem(key) || "";
+    total += key.length + value.length;
+  }
+  const mb = (total * 2) / 1024 / 1024;
+  return `${mb.toFixed(1)} MB`;
+}
+
+export function getDisclosureCache(key: string, ttlMs = 10 * 60 * 1000): DisclosureFetchResult | undefined {
+  try {
+    const raw = localStorage.getItem(`${DISCLOSURE_CACHE_PREFIX}${key}`);
+    if (!raw) return undefined;
+    const parsed = JSON.parse(raw) as { storedAt: number; value: DisclosureFetchResult };
+    if (Date.now() - parsed.storedAt > ttlMs) return undefined;
+    return {
+      ...parsed.value,
+      userMessage: `${parsed.value.userMessage}（短時間の再取得を避けるため、保存済み結果を表示しています）`
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+export function setDisclosureCache(key: string, value: DisclosureFetchResult): void {
+  localStorage.setItem(`${DISCLOSURE_CACHE_PREFIX}${key}`, JSON.stringify({ storedAt: Date.now(), value }));
+}
