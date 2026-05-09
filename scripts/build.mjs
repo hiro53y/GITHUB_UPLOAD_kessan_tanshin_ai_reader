@@ -16,7 +16,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, "..");
 const dist = path.join(root, "dist");
 const assets = path.join(dist, "assets");
-const BUILD_ID = "20260509-3";
+const BUILD_ID = "20260509-5";
 const APP_JS = `app-${BUILD_ID}.js`;
 const APP_CSS = `index-${BUILD_ID}.css`;
 

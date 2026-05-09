@@ -85,8 +85,13 @@ export type ExtractedNumber = {
 };
 
 export type FreeAiDigest = {
+  verdict: "good" | "mixed" | "weak" | "neutral" | "unknown";
+  verdictLabel: string;
   headline: string;
+  plainSummary: string;
   bullets: string[];
+  goodPoints: string[];
+  concernPoints: string[];
   topicSummaries: Array<{
     category: TopicCategory | "総合";
     summary: string;

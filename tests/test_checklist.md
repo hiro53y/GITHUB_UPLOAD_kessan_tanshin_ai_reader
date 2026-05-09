@@ -17,7 +17,7 @@
 - [x] 取得失敗時の手動PDFアップロード/PDF URL案内を実装している
 - [x] 標準ルール分析だけでレポート生成する
 - [x] `deliverables/GITHUB_UPLOAD_kessan_tanshin_ai_reader` にGitHubアップロード用ファイル一式がある
-- [x] `deliverables/GITHUB_UPLOAD_kessan_tanshin_ai_reader` に `node_modules/`、`dist/`、`out/`、`github_upload/` が含まれない
+- [x] `node_modules/`、`dist/`、`.npm-cache/`、`.npm-pack-cache/`、`.manual-rollup/` は `.gitignore` に含め、GitHub管理対象から除外
 - [x] `deliverables/GITHUB_UPLOAD_kessan_tanshin_ai_reader` に `src/src`、`public/public`、`scripts/scripts`、`worker/worker` の重複コピーが含まれない
 - [x] `node node_modules/typescript/bin/tsc --noEmit -p deliverables/GITHUB_UPLOAD_kessan_tanshin_ai_reader/tsconfig.json` が成功
 - [x] `scripts/build.mjs` の未宣言依存 `@rollup/plugin-node-resolve` をローカルresolverに置換
@@ -32,10 +32,18 @@
 - [x] Service Worker cache名を更新し、旧cache削除とassets network-firstを実装
 - [x] `dist/index.html` が `/assets/app-20260509-3.js` と `/assets/index-20260509-3.css` を参照している
 - [x] ホーム先頭に「改修版 2026-05-09.3」カードを追加
+- [x] `dist/index.html` が `/assets/app-20260509-4.js` と `/assets/index-20260509-4.css` を参照している
+- [x] ホーム先頭に「要約強化版 2026-05-09.4」カードを追加
+- [x] TDnet PDFと一般HTTPS PDFをローカル `/api/proxy` 経由でHTTP 200取得できる
+- [x] 決算短信の定型業績表から、売上高・営業利益・経常利益・純利益の前年比、通期予想、配当予想を要約へ反映する処理を追加
+- [x] `dist/index.html` が `/assets/app-20260509-5.js` と `/assets/index-20260509-5.css` を参照している
+- [x] ホーム先頭に「要約強化版 2026-05-09.5」カードを追加
+- [x] 添付PDF相当の決算短信から `2026年３月期第３四半期 | 148,966 | △5.0 | 9,503 | △14.5 | 13,485 | △22.2 | 9,438 | △16.5` を抽出できることを確認
+- [x] 同PDFから通期予想 `199,000 | △4.5 | 11,600 | △16.5 | 17,000 | △21.1 | 11,500 | △14.8` を抽出できることを確認
 
 ## 未実施
 
-- [ ] このOneDrive環境での再 `npm install` はEPERMで失敗。Cloudflare Pagesなどクリーン環境で再確認する。
+- [ ] 通常の `npm install` は既存 `node_modules` がOneDriveでロックされEPERMになる場合がある。Cloudflare Pagesなどクリーン環境で再確認する。
 - [ ] Android実機Chromeでの表示確認
 - [ ] ホーム画面追加後の起動確認
 - [ ] 実PDFアップロードによる手動分析の実機操作確認

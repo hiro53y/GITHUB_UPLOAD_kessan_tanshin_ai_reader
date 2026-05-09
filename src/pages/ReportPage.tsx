@@ -13,6 +13,13 @@ function topicStatus(topic: AnalysisReport["topics"][number]) {
   return <StatusBadge tone="green">検出</StatusBadge>;
 }
 
+function verdictTone(verdict?: AnalysisReport["freeAiDigest"]["verdict"]): "green" | "blue" | "orange" | "gray" {
+  if (verdict === "good") return "green";
+  if (verdict === "weak" || verdict === "mixed") return "orange";
+  if (verdict === "neutral") return "blue";
+  return "gray";
+}
+
 export function ReportPage({
   report,
   fetchResult,
@@ -40,12 +47,26 @@ export function ReportPage({
 
   const markdown = buildMarkdownReport(report);
   const detectedTopics = report.topics.filter((topic) => topic.detected);
-  const digest = report.freeAiDigest || {
+  const digestBase = {
+    verdict: "unknown" as const,
+    verdictLabel: "業績判断は材料不足",
     headline: report.oneLineSummary,
+    plainSummary: report.oneLineSummary,
     bullets: [`検出トピック: ${detectedTopics.map((topic) => topic.category).join("、") || "少なめ"}`],
+    goodPoints: ["好材料として明確に分類できる語句は多くありません。"],
+    concernPoints: report.warnings.length ? report.warnings.map((warning) => warning.comment) : ["強い注意語句は目立ちません。"],
     topicSummaries: detectedTopics.slice(0, 4).map((topic) => ({ category: topic.category, summary: topic.comment, pages: topic.pages })),
     keyFigures: report.extractedNumbers.slice(0, 5).map((item) => `${item.label}: ${item.valueText}（${item.pageNumber}P）`),
     method: "無料AI要約（保存済みレポート互換表示）"
+  };
+  const digest = {
+    ...digestBase,
+    ...(report.freeAiDigest || {}),
+    goodPoints: report.freeAiDigest?.goodPoints?.length ? report.freeAiDigest.goodPoints : digestBase.goodPoints,
+    concernPoints: report.freeAiDigest?.concernPoints?.length ? report.freeAiDigest.concernPoints : digestBase.concernPoints,
+    bullets: report.freeAiDigest?.bullets?.length ? report.freeAiDigest.bullets : digestBase.bullets,
+    topicSummaries: report.freeAiDigest?.topicSummaries?.length ? report.freeAiDigest.topicSummaries : digestBase.topicSummaries,
+    keyFigures: report.freeAiDigest?.keyFigures?.length ? report.freeAiDigest.keyFigures : digestBase.keyFigures
   };
 
   if (detail) {
@@ -100,7 +121,7 @@ export function ReportPage({
 
   return (
     <div className="space-y-4">
-      <Card title="一言サマリー">
+      <Card title="決算サマリー" action={<StatusBadge tone={verdictTone(digest.verdict)}>{digest.verdictLabel}</StatusBadge>}>
         <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 text-lg font-bold leading-8 text-slate-950">{report.oneLineSummary}</div>
         <div className="mt-3 flex flex-wrap gap-2">
           <StatusBadge tone={report.overallTone === "caution" ? "orange" : report.overallTone === "mixed" ? "orange" : "green"}>
@@ -115,14 +136,32 @@ export function ReportPage({
                     : "判定不明"}
           </StatusBadge>
           <StatusBadge tone="blue">信頼度: {report.confidence === "high" ? "高" : report.confidence === "medium" ? "中" : "低"}</StatusBadge>
-          <StatusBadge tone="blue">無料AI要約</StatusBadge>
+          <StatusBadge tone="blue">無料AI診断</StatusBadge>
         </div>
       </Card>
 
-      <Card title="無料AI要約" icon={<Sparkles className="h-5 w-5" />} action={<StatusBadge tone="blue">API不要</StatusBadge>}>
+      <Card title="無料AI診断・要点" icon={<Sparkles className="h-5 w-5" />} action={<StatusBadge tone="blue">API不要</StatusBadge>}>
         <div className="space-y-3">
           <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 text-base font-bold leading-7 text-slate-950">
-            {digest.headline}
+            {digest.plainSummary || digest.headline}
+          </div>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="rounded-xl border border-green-100 bg-green-50 p-3">
+              <div className="mb-2 font-bold text-green-800">良い点</div>
+              <ul className="space-y-2 text-sm leading-6 text-green-900">
+                {digest.goodPoints.map((point) => (
+                  <li key={point}>{point}</li>
+                ))}
+              </ul>
+            </div>
+            <div className="rounded-xl border border-orange-100 bg-orange-50 p-3">
+              <div className="mb-2 font-bold text-orange-800">注意点</div>
+              <ul className="space-y-2 text-sm leading-6 text-orange-900">
+                {digest.concernPoints.map((point) => (
+                  <li key={point}>{point}</li>
+                ))}
+              </ul>
+            </div>
           </div>
           <ul className="space-y-2 text-sm leading-6 text-slate-700">
             {digest.bullets.map((bullet) => (
@@ -131,6 +170,16 @@ export function ReportPage({
               </li>
             ))}
           </ul>
+          {digest.keyFigures.length ? (
+            <div className="rounded-xl border border-blue-100 p-3">
+              <div className="mb-2 font-bold text-slate-950">主要数値候補</div>
+              <div className="flex flex-wrap gap-2">
+                {digest.keyFigures.slice(0, 8).map((figure) => (
+                  <StatusBadge key={figure} tone="blue">{figure}</StatusBadge>
+                ))}
+              </div>
+            </div>
+          ) : null}
           <div className="space-y-2">
             {digest.topicSummaries.slice(0, 4).map((item) => (
               <div key={`${item.category}-${item.pages.join("-")}`} className="rounded-xl border border-blue-100 p-3">

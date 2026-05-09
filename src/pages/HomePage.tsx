@@ -30,9 +30,9 @@ export function HomePage({
 
   return (
     <div className="space-y-4">
-      <Card title="改修版 2026-05-09.3" action={<StatusBadge tone="green">更新済み</StatusBadge>}>
+      <Card title="要約強化版 2026-05-09.5" action={<StatusBadge tone="green">更新済み</StatusBadge>}>
         <div className="space-y-2 rounded-xl border border-green-200 bg-green-50 p-3 text-sm font-bold leading-6 text-green-800">
-          <p>無料AI要約、Yahoo!ファイナンス銘柄検索、Cloudflare Pages proxy、根拠ページ表示を反映済みです。</p>
+          <p>決算診断、良い点・注意点、主要数値、Yahoo!ファイナンス銘柄検索、PDF URL proxyを強化済みです。</p>
           <p>このカードが見えていれば、新しい版が表示されています。</p>
         </div>
       </Card>

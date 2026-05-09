@@ -21,7 +21,7 @@ import {
   saveSettings
 } from "./lib/storage";
 import type { AnalysisReport, DisclosureFetchResult, DisclosureItem, HistoryItem, LoadingStep } from "./lib/types";
-import { compactText, createId, createInitialSteps, formatDateTime, isValidTicker, normalizeTicker } from "./lib/utils";
+import { compactText, createId, createInitialSteps, formatDateTime, isValidTicker, normalizePdfUrlInput, normalizeTicker } from "./lib/utils";
 
 type LastTickerRequest = {
   ticker: string;
@@ -294,7 +294,8 @@ export default function App() {
   }
 
   async function handleAnalyzeUrl(url: string, ticker?: string, companyName?: string) {
-    const disclosure = makeManualDisclosure({ url, fileName: "PDF URL貼り付け資料", ticker: ticker ? normalizeTicker(ticker) : undefined, companyName });
+    const normalizedUrl = normalizePdfUrlInput(url);
+    const disclosure = makeManualDisclosure({ url: normalizedUrl, fileName: "PDF URL貼り付け資料", ticker: ticker ? normalizeTicker(ticker) : undefined, companyName });
     setActive("fetch");
     setFetchResult({
       status: "success",
@@ -309,7 +310,7 @@ export default function App() {
     setSelectedDisclosure(disclosure);
     setSteps(createInitialSteps().map((step) => (step.id <= 3 ? { ...step, status: "skipped", detail: "PDF URL指定のため省略" } : step)));
     setLogs(["PDF URL貼り付けで分析を開始しました"]);
-    await runPdfAnalysis(url, disclosure);
+    await runPdfAnalysis(normalizedUrl, disclosure);
   }
 
   function retryLastTicker() {
@@ -347,7 +348,7 @@ export default function App() {
     if (active === "report") return { title: detailReport ? "詳細レポート" : "決算分析レポート", sub: report?.companyName ? `${report.ticker || ""} ${report.companyName}` : "標準ルール分析" };
     if (active === "history") return { title: "分析履歴", sub: "保存済みレポート" };
     if (active === "settings") return { title: "設定", sub: "取得・分析オプション" };
-    return { title: "決算短信AIリーダー", sub: "改修版 build: 2026-05-09.3" };
+    return { title: "決算短信AIリーダー", sub: "要約強化版 build: 2026-05-09.5" };
   })();
 
   return (

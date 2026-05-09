@@ -36,7 +36,9 @@ async function proxyTdnet(req, res) {
       return true;
     }
     const parsed = new URL(targetParam);
-    if (!["www.release.tdnet.info", "release.tdnet.info"].includes(parsed.hostname)) {
+    const allowed = ["www.release.tdnet.info", "release.tdnet.info"].includes(parsed.hostname) ||
+      (req.method === "GET" && parsed.protocol === "https:" && parsed.pathname.toLowerCase().endsWith(".pdf"));
+    if (!allowed) {
       res.writeHead(403, { "Content-Type": "application/json; charset=utf-8", "Access-Control-Allow-Origin": "*" });
       res.end(JSON.stringify({ error: "host_not_allowed" }));
       return true;

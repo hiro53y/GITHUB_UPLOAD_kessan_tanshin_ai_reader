@@ -195,7 +195,12 @@ async function fallbackListSearch(
 
   for (const date of dates) {
     const firstPageUrl = `${TDNET_INBS_URL}I_list_001_${date.value}.html`;
-    const { text } = await fetchTextWithFallback(firstPageUrl);
+    let text = "";
+    try {
+      text = (await fetchTextWithFallback(firstPageUrl)).text;
+    } catch {
+      continue;
+    }
     pageCount += 1;
     const links = parseListPageLinks(text, date.value);
     const pageLinks = links.length ? links : [`I_list_001_${date.value}.html`];
@@ -205,8 +210,12 @@ async function fallbackListSearch(
         if (pageCount >= maxPages) return { candidates, truncated: true };
         pageCount += 1;
       }
-      const html = link === `I_list_001_${date.value}.html` ? text : (await fetchTextWithFallback(`${TDNET_INBS_URL}${link}`)).text;
-      candidates.push(...parseDisclosureRows(html, `${TDNET_INBS_URL}${link}`).filter((item) => item.ticker === ticker));
+      try {
+        const html = link === `I_list_001_${date.value}.html` ? text : (await fetchTextWithFallback(`${TDNET_INBS_URL}${link}`)).text;
+        candidates.push(...parseDisclosureRows(html, `${TDNET_INBS_URL}${link}`).filter((item) => item.ticker === ticker));
+      } catch {
+        continue;
+      }
     }
 
     if (candidates.some((item) => item.documentType === "earnings_release")) break;
@@ -257,13 +266,22 @@ export async function fetchLatestDisclosureByTicker(input: {
 
     const newest = dates[0].value;
     const oldest = dates[dates.length - 1].value;
-    let rawCandidates = await searchByKeyword(ticker, oldest, newest, ticker, input.companyName);
-
-    if (!rawCandidates.length && input.companyName) {
-      rawCandidates = await searchByKeyword(input.companyName, oldest, newest, ticker, input.companyName);
+    let note = "";
+    let rawCandidates: DisclosureItem[] = [];
+    try {
+      rawCandidates = await searchByKeyword(ticker, oldest, newest, ticker, input.companyName);
+    } catch {
+      note = "検索フォーム取得に失敗したため、日別一覧探索へ切り替えました。";
     }
 
-    let note = "";
+    if (!rawCandidates.length && input.companyName) {
+      try {
+        rawCandidates = await searchByKeyword(input.companyName, oldest, newest, ticker, input.companyName);
+      } catch {
+        note = note || "会社名検索に失敗したため、日別一覧探索へ切り替えました。";
+      }
+    }
+
     if (!rawCandidates.length) {
       const fallback = await fallbackListSearch(dates, ticker);
       rawCandidates = fallback.candidates;

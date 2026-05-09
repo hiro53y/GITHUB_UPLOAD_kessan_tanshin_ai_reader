@@ -23,6 +23,13 @@ export function isValidTicker(value: string): boolean {
   return /^\d{4}$/.test(normalizeTicker(value));
 }
 
+export function normalizePdfUrlInput(value: string): string {
+  let text = value.trim().replace(/^<|>$/g, "").replace(/^["']|["']$/g, "");
+  if (text.startsWith("//")) text = `https:${text}`;
+  if (/^www\./i.test(text)) text = `https://${text}`;
+  return text;
+}
+
 export function formatDateTime(value?: string): string {
   if (!value) return "不明";
   const date = new Date(value);
@@ -89,7 +96,8 @@ function devProxyUrl(url: string): string | undefined {
 function isAllowedProxyTarget(url: string): boolean {
   try {
     const parsed = new URL(url);
-    return parsed.hostname === "www.release.tdnet.info" || parsed.hostname === "release.tdnet.info";
+    if (parsed.hostname === "www.release.tdnet.info" || parsed.hostname === "release.tdnet.info") return true;
+    return parsed.protocol === "https:" && parsed.pathname.toLowerCase().endsWith(".pdf");
   } catch {
     return false;
   }
@@ -155,7 +163,12 @@ export async function fetchArrayBufferWithFallback(url: string): Promise<ArrayBu
 
   for (const attemptUrl of attempts) {
     try {
-      const response = await fetch(attemptUrl, { cache: "force-cache" });
+      const response = await fetch(attemptUrl, {
+        cache: "no-store",
+        headers: {
+          Accept: "application/pdf,application/octet-stream,*/*"
+        }
+      });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const contentType = response.headers.get("content-type") || "";
       if (attemptUrl.startsWith("/api/proxy") && /\.pdf(?:$|\?)/i.test(url) && contentType.includes("text/html")) {

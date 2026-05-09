@@ -26,6 +26,11 @@ function allowedHosts(env: Record<string, unknown>): string[] {
   return [...DEFAULT_ALLOWED_HOSTS, ...extra];
 }
 
+function isAllowedTarget(target: URL, method: string, env: Record<string, unknown>): boolean {
+  if (allowedHosts(env).includes(target.hostname)) return true;
+  return method === "GET" && target.protocol === "https:" && target.pathname.toLowerCase().endsWith(".pdf");
+}
+
 function rateLimitKey(request: Request): string {
   return request.headers.get("CF-Connecting-IP") || request.headers.get("x-forwarded-for") || "anonymous";
 }
@@ -68,7 +73,7 @@ export async function onRequest(context: ProxyContext): Promise<Response> {
     return jsonResponse({ error: "invalid_url" }, 400);
   }
 
-  if (!allowedHosts(env).includes(target.hostname)) {
+  if (!isAllowedTarget(target, request.method, env)) {
     return jsonResponse({ error: "host_not_allowed", host: target.hostname }, 403);
   }
 

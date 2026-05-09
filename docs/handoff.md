@@ -26,6 +26,9 @@ GitHubへアップロードする対象は `deliverables/GITHUB_UPLOAD_kessan_ta
 - Yahoo!ファイナンスの銘柄コード検索リンクをホームに追加
 - PWAのService Worker cacheを更新し、古い画面が残る問題を修正
 - JS/CSSをバージョン付きファイル名に変更し、ホーム先頭に「改修版 2026-05-09.3」カードを追加
+- 2026-05-09.4で、ホーム先頭を「要約強化版」に更新し、無料AI診断の表示内容を業績診断・良い点・注意点・主要数値中心に変更
+- PDF URL貼り付けはTDnet以外でも、HTTPSかつ `.pdf` のURLならPages proxyを通すように変更
+- 2026-05-09.5で、決算短信1ページ目の業績表を優先解析し、売上高・営業利益・経常利益・純利益の前年差、通期予想、配当予想を自然文で要約するように変更
 
 ## 未完了
 
@@ -44,4 +47,4 @@ GitHubへアップロードする対象は `deliverables/GITHUB_UPLOAD_kessan_ta
 - ローカルでの再 `npm install` / クリーン `npm ci` はOneDrive配下のEPERMで失敗する場合がある。Cloudflare Pages側ではリポジトリ直下で `npm run build` を実行する。
 - `node_modules/`、`dist/`、`.npm-cache/`、`.npm-pack-cache/`、`.manual-rollup/` はGitHubアップロード対象外。`.gitignore` に含めている。
 - 既にスマホで旧版を開いていた場合、初回アクセス時にService Worker更新で自動リロードされる。まだ旧表示ならChromeのサイトデータ削除または強制再読み込みで確認する。
-- 新版が表示されていれば、ホーム最上部に「改修版 2026-05-09.3」カードが見える。
+- 新版が表示されていれば、ホーム最上部に「要約強化版 2026-05-09.5」カードが見える。
