@@ -2,6 +2,8 @@ import type {
   AnalysisReport,
   DisclosureItem,
   ExtractedNumber,
+  FreeAiDigest,
+  FreeAiVerdict,
   SourceCheckpoint,
   TopicAnalysis,
   TopicCategory,
@@ -130,7 +132,7 @@ type FinancialDigestBase = {
   performanceSummary?: string;
   forecastSummary?: string;
   dividendSummary?: string;
-  verdict?: AnalysisReport["freeAiDigest"]["verdict"];
+  verdict?: FreeAiVerdict;
   keyFigures: string[];
 };
 
@@ -151,36 +153,10 @@ function excerptAround(text: string, keyword: string, maxLength = 120): string {
   return compactText(text.slice(start, start + maxLength), maxLength);
 }
 
-function normalizeExcerpt(value?: string): string {
-  return compactText((value || "").replace(/[　\s]+/g, " "), 150);
-}
-
-function scoreExcerpt(text: string): number {
-  const compact = normalizeExcerpt(text);
-  let score = 0;
-  for (const word of [...positiveWords, ...negativeWords, ...neutralWords]) {
-    if (compact.includes(word)) score += 4;
-  }
-  if (/[△▲\-]?\d[\d,]*(?:\.\d+)?\s*(?:百万円|億円|円|％|%|ポイント)?/.test(compact)) score += 3;
-  if (compact.includes("前年同期比") || compact.includes("前期比")) score += 2;
-  if (compact.includes("通期") || compact.includes("予想")) score += 1;
-  return score;
-}
-
-function bestExcerpt(excerpts: string[], fallback = ""): string {
-  const sorted = [...excerpts].sort((a, b) => scoreExcerpt(b) - scoreExcerpt(a));
-  return normalizeExcerpt(sorted[0] || fallback);
-}
-
-function topicComment(category: TopicCategory, detected: boolean, excerpts: string[], keywords: string[]): string {
-  if (!detected) {
-    return `${category}: 要約に使える具体的な文章は少なめです。`;
-  }
-  const lead = bestExcerpt(excerpts);
-  const keywordText = keywords.slice(0, 4).join("、");
-  return lead
-    ? `${category}: ${lead}`
-    : `${category}: ${keywordText}に関する内容があります。`;
+function topicComment(category: TopicCategory, detected: boolean, _excerpts: string[], keywords: string[]): string {
+  if (!detected) return `${category}に関するキーワードは検出されませんでした。`;
+  const kws = keywords.slice(0, 5).join("・");
+  return `${kws}などの記載を検出。詳細は原文で確認を。`;
 }
 
 function analyzeTopics(pages: Array<{ pageNumber: number; text: string }>): TopicAnalysis[] {
@@ -415,17 +391,6 @@ function verdictLabel(verdict: AnalysisReport["freeAiDigest"]["verdict"]): strin
   return "業績判断は材料不足";
 }
 
-function summarizeTopicLine(category: TopicCategory, topics: TopicAnalysis[]): string {
-  const topic = topics.find((item) => item.category === category);
-  if (!topic || !topic.detected) return `${category}: 主要な要約材料は少なめです。`;
-  const excerpt = bestExcerpt(topic.excerpts, topic.comment);
-  return `${category}: ${excerpt}`;
-}
-
-function compactPoint(text: string, maxLength = 96): string {
-  return compactText(text.replace(/^[^:：]+[:：]\s*/, "").replace(/[　\s]+/g, " "), maxLength);
-}
-
 function decideTone(topics: TopicAnalysis[], warnings: WarningItem[]): AnalysisReport["overallTone"] {
   const detectedText = topics.flatMap((topic) => topic.excerpts).join(" ");
   const positiveCount = ["増収", "増益", "黒字転換", "上方修正", "増配"].filter((word) => detectedText.includes(word)).length;
@@ -444,22 +409,34 @@ function decideConfidence(rawTextLength: number, detectedTopics: number): Analys
 }
 
 function buildSummary(topics: TopicAnalysis[], warnings: WarningItem[], financialDigest: FinancialDigestBase): string {
+  const warningLabels = warnings.map((w) => w.label).slice(0, 3);
+  const warningText = warningLabels.length ? `注意語句: ${warningLabels.join("・")}。` : "強い注意語句は目立ちません。";
+
+  // 数値パースできた場合は構造化サマリーを使用
   if (financialDigest.performanceSummary) {
-    const warningLabels = warnings.map((warning) => warning.label).slice(0, 3);
-    const warningText = warningLabels.length ? `注意点は${warningLabels.join("・")}。` : "";
-    return compactText(
-      `${verdictLabel(financialDigest.verdict || "unknown")}。${financialDigest.performanceSummary} ${financialDigest.forecastSummary || ""} ${warningText}`,
-      320
-    );
+    const parts = [
+      verdictLabel(financialDigest.verdict || "unknown") + "。",
+      financialDigest.performanceSummary,
+      financialDigest.forecastSummary,
+      financialDigest.dividendSummary,
+      warningText
+    ].filter(Boolean);
+    return compactText(parts.join(" "), 300);
   }
-  const rawText = topics.flatMap((topic) => topic.excerpts).join(" ");
+
+  // 数値パース不可の場合はキーワードリストで簡潔に
+  const rawText = topics.flatMap((t) => t.excerpts).join(" ");
   const verdict = verdictLabel(classifyVerdict(rawText, financialDigest));
-  const sales = compactPoint(summarizeTopicLine("売上", topics), 72);
-  const profit = compactPoint(summarizeTopicLine("利益", topics), 72);
-  const forecast = compactPoint(summarizeTopicLine("通期予想", topics), 68);
-  const warningLabels = warnings.map((warning) => warning.label).slice(0, 3);
-  const warningText = warningLabels.length ? `注意語句は${warningLabels.join("・")}です。` : "強い注意語句は目立ちません。";
-  return compactText(`${verdict}。売上は${sales} 利益は${profit} 通期予想は${forecast} ${warningText}`, 280);
+  const detectedTopics = topics.filter((t) => t.detected);
+  const positiveKws = unique(detectedTopics.flatMap((t) => t.keywords.filter((kw) => positiveWords.includes(kw)))).slice(0, 4);
+  const negativeKws = unique(detectedTopics.flatMap((t) => t.keywords.filter((kw) => negativeWords.includes(kw)))).slice(0, 3);
+  const allKws = unique([...positiveKws, ...negativeKws]);
+  const kwText = allKws.length
+    ? `主要語句: ${allKws.join("・")}。`
+    : detectedTopics.length
+      ? `検出項目: ${detectedTopics.map((t) => t.category).slice(0, 5).join("・")}。`
+      : "主要キーワードの検出が少なく、PDFの文字埋め込み状態に依存します。";
+  return `${verdict}。${kwText}${warningText}`;
 }
 
 function buildFreeAiDigest(
@@ -468,75 +445,89 @@ function buildFreeAiDigest(
   numbers: ExtractedNumber[],
   rawText: string,
   financialDigest: FinancialDigestBase
-): AnalysisReport["freeAiDigest"] {
+): FreeAiDigest {
   const detectedTopics = topics.filter((topic) => topic.detected);
   const verdict = classifyVerdict(rawText, financialDigest);
   const label = verdictLabel(verdict);
-  const warningNames = warnings.map((warning) => warning.label);
+
+  // 数値パース済みのキーフィギュアを優先。なければ抽出数値から補完
   const extractedKeyFigures = numbers
-    .filter((item, index, all) => all.findIndex((candidate) => candidate.label === item.label) === index)
-    .slice(0, 10)
+    .filter((item, index, all) => all.findIndex((c) => c.label === item.label) === index)
+    .slice(0, 8)
     .map((item) => `${item.label}: ${item.valueText}（${item.pageNumber}P）`);
+  const keyFigures = financialDigest.keyFigures.length ? financialDigest.keyFigures : extractedKeyFigures;
 
-  const sales = summarizeTopicLine("売上", topics);
-  const profit = summarizeTopicLine("利益", topics);
-  const forecast = summarizeTopicLine("通期予想", topics);
-  const dividend = summarizeTopicLine("配当", topics);
-  const segment = summarizeTopicLine("セグメント", topics);
-  const cashflow = summarizeTopicLine("キャッシュフロー", topics);
-  const finance = summarizeTopicLine("財務状態", topics);
-  const risk = summarizeTopicLine("リスク・注記", topics);
-
+  // ヘッドライン：判定 + パース済みサマリーか主要キーワード
+  const detectedPositiveKws = unique(detectedTopics.flatMap((t) => t.keywords.filter((kw) => positiveWords.includes(kw)))).slice(0, 3);
   const headline = financialDigest.performanceSummary
     ? `${label}。${financialDigest.performanceSummary}`
-    : `${label}。${compactPoint(sales, 70)} ${compactPoint(profit, 70)}`;
-  const plainSummary = financialDigest.performanceSummary
-    ? compactText(
-        `${label}です。${financialDigest.performanceSummary} ${financialDigest.forecastSummary || compactPoint(forecast, 120)} ${financialDigest.dividendSummary || compactPoint(dividend, 90)}`,
-        520
-      )
-    : compactText(
-        `${label}です。売上面は「${compactPoint(sales, 100)}」。利益面は「${compactPoint(profit, 100)}」。通期予想は「${compactPoint(forecast, 100)}」。配当は「${compactPoint(dividend, 90)}」。`,
-        420
-      );
+    : detectedPositiveKws.length
+      ? `${label}。${detectedPositiveKws.join("・")}などの記載を検出。`
+      : `${label}。`;
 
-  const bullets = [
-    financialDigest.performanceSummary || sales,
-    financialDigest.forecastSummary || forecast,
-    financialDigest.dividendSummary || dividend,
-    segment,
-    cashflow
-  ];
+  // plainSummary：箇条書き形式のクリーンな文章（生テキスト転記なし）
+  const plainSummaryLines: string[] = [`${label}。`];
+  if (financialDigest.performanceSummary) {
+    plainSummaryLines.push(financialDigest.performanceSummary);
+  }
+  if (financialDigest.forecastSummary) {
+    plainSummaryLines.push(financialDigest.forecastSummary);
+  }
+  if (financialDigest.dividendSummary) {
+    plainSummaryLines.push(financialDigest.dividendSummary);
+  }
+  if (!financialDigest.performanceSummary) {
+    for (const t of detectedTopics.slice(0, 6)) {
+      plainSummaryLines.push(`・${t.category}: ${t.keywords.slice(0, 5).join("・")}を検出`);
+    }
+  }
+  plainSummaryLines.push(warnings.length ? `・注意語句: ${warnings.slice(0, 3).map((w) => w.label).join("・")}` : "・強い注意語句は目立ちません");
+  const plainSummary = plainSummaryLines.join("\n");
 
-  const positiveSource = [...topics.flatMap((topic) => topic.excerpts), rawText]
-    .filter((text) => positiveWords.some((word) => text.includes(word)))
-    .map((text) => compactText(text, 110));
-  const concernSource = [
-    ...warnings.map((warning) => `${warning.label}: ${warning.comment}`),
-    ...topics.flatMap((topic) => topic.excerpts).filter((text) => negativeWords.some((word) => text.includes(word)))
-  ];
-  const goodPoints = unique(positiveSource).slice(0, 4);
-  const concernPoints = unique(concernSource.map((text) => compactText(text, 120))).slice(0, 5);
+  // bullets：構造化テキストのみ（生テキストなし）
+  const bullets: string[] = [];
+  if (financialDigest.performanceSummary) bullets.push(financialDigest.performanceSummary);
+  if (financialDigest.forecastSummary) bullets.push(financialDigest.forecastSummary);
+  if (financialDigest.dividendSummary) bullets.push(financialDigest.dividendSummary);
+  for (const t of detectedTopics.filter((t) => !["売上", "利益", "通期予想", "配当"].includes(t.category)).slice(0, 3)) {
+    bullets.push(`${t.category}: ${t.keywords.slice(0, 4).join("・")}を検出`);
+  }
 
-  const topicSummaries: AnalysisReport["freeAiDigest"]["topicSummaries"] = detectedTopics.slice(0, 8).map((topic) => ({
-    category: topic.category,
-    summary:
-      topic.category === "売上" && financialDigest.performanceSummary
-        ? financialDigest.performanceSummary
-        : topic.category === "利益" && financialDigest.performanceSummary
-          ? financialDigest.performanceSummary
-          : topic.category === "通期予想" && financialDigest.forecastSummary
-            ? financialDigest.forecastSummary
-            : topic.category === "配当" && financialDigest.dividendSummary
-              ? financialDigest.dividendSummary
-              : topic.comment,
-    pages: topic.pages
-  }));
+  // goodPoints：パース済みキーフィギュアを優先、なければ検出したポジティブキーワード
+  let goodPoints: string[];
+  if (keyFigures.length) {
+    goodPoints = keyFigures.slice(0, 5);
+  } else {
+    const posKws = unique(detectedTopics.flatMap((t) => t.keywords.filter((kw) => positiveWords.includes(kw)))).slice(0, 5);
+    goodPoints = posKws.length ? posKws.map((kw) => `「${kw}」の記載を検出`) : ["好材料として明確に分類できる語句は多くありません。"];
+  }
+
+  // concernPoints：警告項目の簡潔な説明（生テキスト転記なし）
+  const concernPoints: string[] = warnings.length
+    ? warnings.slice(0, 5).map((w) => `${w.label}（${w.level === "high" ? "要注意" : "参考"}）: ${w.comment}`)
+    : ["強い注意語句は目立ちません。"];
+
+  // topicSummaries：カテゴリ別の構造化サマリー（生テキストなし）
+  const topicSummaries = detectedTopics.slice(0, 8).map((topic) => {
+    let summary: string;
+    if (topic.category === "売上" && financialDigest.performanceSummary) {
+      summary = financialDigest.performanceSummary;
+    } else if (topic.category === "利益" && financialDigest.performanceSummary) {
+      summary = financialDigest.performanceSummary;
+    } else if (topic.category === "通期予想" && financialDigest.forecastSummary) {
+      summary = financialDigest.forecastSummary;
+    } else if (topic.category === "配当" && financialDigest.dividendSummary) {
+      summary = financialDigest.dividendSummary;
+    } else {
+      summary = `${topic.keywords.slice(0, 5).join("・")}などの記載を検出。`;
+    }
+    return { category: topic.category, summary, pages: topic.pages };
+  });
 
   if (!topicSummaries.length) {
     topicSummaries.push({
       category: "総合",
-      summary: "決算短信から十分な文章を抽出できなかったため、アップロードPDFの文字埋め込み状態に依存します。",
+      summary: "決算短信から十分なキーワードを抽出できませんでした。PDFの文字埋め込み状態をご確認ください。",
       pages: []
     });
   }
@@ -547,11 +538,11 @@ function buildFreeAiDigest(
     headline,
     plainSummary,
     bullets,
-    goodPoints: goodPoints.length ? goodPoints : ["好材料として明確に分類できる語句は多くありません。"],
-    concernPoints: concernPoints.length ? concernPoints : ["強い注意語句は目立ちません。"],
+    goodPoints,
+    concernPoints,
     topicSummaries,
-    keyFigures: financialDigest.keyFigures.length ? financialDigest.keyFigures : extractedKeyFigures,
-    method: "無料AI診断（外部APIなし・端末内の抽出型要約）"
+    keyFigures,
+    method: "無料AI診断（外部APIなし・端末内キーワード解析）"
   };
 }
 

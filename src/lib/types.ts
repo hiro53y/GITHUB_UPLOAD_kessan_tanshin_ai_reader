@@ -84,6 +84,21 @@ export type ExtractedNumber = {
   context: string;
 };
 
+export type FreeAiVerdict = "good" | "weak" | "mixed" | "neutral" | "unknown";
+
+export type FreeAiDigest = {
+  verdict: FreeAiVerdict;
+  verdictLabel: string;
+  headline: string;
+  plainSummary: string;
+  bullets: string[];
+  goodPoints: string[];
+  concernPoints: string[];
+  topicSummaries: Array<{ category: string; summary: string; pages: number[] }>;
+  keyFigures: string[];
+  method: string;
+};
+
 export type AnalysisReport = {
   ticker?: string;
   companyName?: string;
@@ -96,6 +111,7 @@ export type AnalysisReport = {
   warnings: WarningItem[];
   sourceCheckpoints: SourceCheckpoint[];
   extractedNumbers: ExtractedNumber[];
+  freeAiDigest: FreeAiDigest;
   aiPrompt: string;
   aiSummary?: string;
   disclaimer: string;

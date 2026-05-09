@@ -1,4 +1,4 @@
-import { ArrowLeft, BarChart3, ClipboardCopy, ExternalLink, FileText, Grid2X2, ListChecks } from "lucide-react";
+import { AlertCircle, ArrowLeft, BarChart3, CheckCircle2, ClipboardCopy, ExternalLink, FileText, Grid2X2, ListChecks } from "lucide-react";
 import { NumberTable } from "../components/NumberTable";
 import { ReportSection } from "../components/ReportSection";
 import { WarningCard } from "../components/WarningCard";
@@ -93,10 +93,11 @@ export function ReportPage({
 
   return (
     <div className="space-y-4">
-      <Card title="一言サマリー">
-        <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 text-lg font-bold leading-8 text-slate-950">{report.oneLineSummary}</div>
+      {/* 決算サマリー */}
+      <Card title="決算サマリー">
+        <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 text-base font-bold leading-7 text-slate-950">{report.oneLineSummary}</div>
         <div className="mt-3 flex flex-wrap gap-2">
-          <StatusBadge tone={report.overallTone === "caution" ? "orange" : report.overallTone === "mixed" ? "orange" : "green"}>
+          <StatusBadge tone={report.overallTone === "caution" || report.overallTone === "mixed" ? "orange" : "green"}>
             {report.overallTone === "positive"
               ? "好材料語句あり"
               : report.overallTone === "caution"
@@ -112,6 +113,78 @@ export function ReportPage({
         </div>
       </Card>
 
+      {/* 無料AI診断カード */}
+      <Card title="無料AI診断・要点" action={<StatusBadge tone="blue">API不要</StatusBadge>}>
+        <div className="space-y-4">
+          {/* 判定バッジ + 方式 */}
+          <div className="flex flex-wrap items-center gap-2">
+            <span className={`inline-flex items-center rounded-full px-3 py-1 text-sm font-bold ${
+              report.freeAiDigest.verdict === "good" ? "bg-green-100 text-green-700" :
+              report.freeAiDigest.verdict === "weak" ? "bg-red-100 text-red-700" :
+              report.freeAiDigest.verdict === "mixed" ? "bg-orange-100 text-orange-700" :
+              "bg-slate-100 text-slate-600"
+            }`}>
+              {report.freeAiDigest.verdictLabel}
+            </span>
+            <span className="text-xs text-slate-400">{report.freeAiDigest.method}</span>
+          </div>
+
+          {/* 主要数値（パース成功時のみ） */}
+          {report.freeAiDigest.keyFigures.length > 0 && (
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+              <div className="mb-2 text-xs font-bold text-slate-500">主要数値</div>
+              <ul className="space-y-1">
+                {report.freeAiDigest.keyFigures.slice(0, 6).map((fig) => (
+                  <li key={fig} className="text-sm font-bold text-slate-800">{fig}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {/* 良い点 / 注意点 */}
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="rounded-xl border border-green-100 bg-green-50 p-3">
+              <div className="mb-2 flex items-center gap-1 text-sm font-bold text-green-700">
+                <CheckCircle2 className="h-4 w-4" />
+                良い点
+              </div>
+              <ul className="space-y-1">
+                {report.freeAiDigest.goodPoints.map((pt) => (
+                  <li key={pt} className="text-sm leading-5 text-slate-700">・{pt}</li>
+                ))}
+              </ul>
+            </div>
+            <div className="rounded-xl border border-orange-100 bg-orange-50 p-3">
+              <div className="mb-2 flex items-center gap-1 text-sm font-bold text-orange-700">
+                <AlertCircle className="h-4 w-4" />
+                注意点
+              </div>
+              <ul className="space-y-1">
+                {report.freeAiDigest.concernPoints.map((pt) => (
+                  <li key={pt} className="text-sm leading-5 text-slate-700">・{pt}</li>
+                ))}
+              </ul>
+            </div>
+          </div>
+
+          {/* トピック別サマリー */}
+          {report.freeAiDigest.topicSummaries.length > 0 && (
+            <div className="overflow-hidden rounded-xl border border-blue-100">
+              {report.freeAiDigest.topicSummaries.map((ts) => (
+                <div key={ts.category} className="grid grid-cols-[88px_1fr] border-b border-blue-100 last:border-b-0">
+                  <div className="flex items-center bg-blue-50 p-2 text-xs font-bold text-brand-600">{ts.category}</div>
+                  <div className="p-2">
+                    <p className="text-sm leading-5 text-slate-700">{ts.summary}</p>
+                    {ts.pages.length > 0 && <p className="mt-1 text-xs text-brand-500">{ts.pages.join("・")}ページ</p>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </Card>
+
+      {/* Cloudflare Workers AI 要約（設定済みの場合のみ） */}
       {report.aiSummary ? (
         <Card title="AI要約">
           <div className="rounded-xl border border-purple-200 bg-gradient-to-br from-purple-50 to-indigo-50 p-4">
@@ -132,6 +205,7 @@ export function ReportPage({
         </Card>
       ) : null}
 
+      {/* 最新資料情報 */}
       <Card title="最新資料カード">
         <div className="space-y-3 text-slate-700">
           <div className="flex items-start justify-between gap-3">
@@ -159,6 +233,7 @@ export function ReportPage({
         </div>
       </Card>
 
+      {/* トピックカード一覧 */}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         {report.topics.map((topic) => (
           <div key={topic.category} className="rounded-[16px] border border-blue-100 bg-white p-4 shadow-soft">
@@ -172,12 +247,13 @@ export function ReportPage({
               {topicStatus(topic)}
             </div>
             <p className="text-sm leading-6 text-slate-700">{topic.comment}</p>
-            {topic.pages.length ? <p className="mt-2 text-sm font-bold text-brand-600">{topic.pages.join("、")}ページ</p> : null}
-            {topic.keywords.length ? <p className="mt-2 text-xs text-slate-500">語句: {topic.keywords.join("、")}</p> : null}
+            {topic.pages.length ? <p className="mt-2 text-sm font-bold text-brand-600">{topic.pages.join("・")}ページ</p> : null}
+            {topic.keywords.length ? <p className="mt-1 text-xs text-slate-500">語句: {topic.keywords.join("・")}</p> : null}
           </div>
         ))}
       </div>
 
+      {/* PDF抽出警告 */}
       {pdfWarnings.length ? (
         <Card title="PDF抽出時の警告">
           <ul className="list-disc space-y-2 pl-5 text-sm leading-6 text-slate-700">
@@ -188,6 +264,7 @@ export function ReportPage({
         </Card>
       ) : null}
 
+      {/* 原文確認ポイント（上位5件） */}
       <ReportSection title="原文確認ポイント" action={<ListChecks className="h-5 w-5 text-brand-600" />}>
         <div className="overflow-hidden rounded-xl border border-blue-100">
           {report.sourceCheckpoints.slice(0, 5).map((checkpoint) => (
@@ -199,6 +276,7 @@ export function ReportPage({
         </div>
       </ReportSection>
 
+      {/* アクションボタン */}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <PrimaryButton onClick={() => onDetailChange(true)}>詳細を見る</PrimaryButton>
         <OutlineButton onClick={() => onCopy("AI用プロンプト", report.aiPrompt)}>
@@ -207,6 +285,7 @@ export function ReportPage({
         </OutlineButton>
       </div>
 
+      {/* 免責事項 */}
       <Card>
         <p className="text-sm leading-6 text-slate-600">{report.disclaimer}</p>
       </Card>

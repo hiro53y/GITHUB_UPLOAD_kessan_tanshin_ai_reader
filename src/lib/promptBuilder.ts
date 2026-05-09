@@ -61,25 +61,27 @@ ${input.textSample}
 }
 
 export function buildMarkdownReport(report: AnalysisReport): string {
+  const dig = report.freeAiDigest;
+
+  const keyFigures = dig.keyFigures.length
+    ? dig.keyFigures.map((fig) => `- ${fig}`).join("\n")
+    : "- 数値は自動パースできませんでした";
+
   const topics = report.topics
-    .map((topic) => {
-      const status = topic.detected ? "検出" : "未検出";
-      return `## ${topic.category}（${status}）\n${topic.comment}\n\n関連ページ: ${topic.pages.join("、") || "なし"}\n\n${topic.excerpts
-        .map((excerpt) => `> ${excerpt}`)
-        .join("\n")}`;
-    })
-    .join("\n\n");
+    .filter((topic) => topic.detected)
+    .map((topic) => `- **${topic.category}**: ${topic.comment}（${topic.pages.join("・")}ページ）`)
+    .join("\n");
 
   const warnings = report.warnings
-    .map((warning) => `- ${warning.label}（${warning.level}）: ${warning.comment} / ページ ${warning.pages.join("、")}`)
+    .map((warning) => `- ${warning.label}（${warning.level === "high" ? "要注意" : "参考"}）: ${warning.comment} / ${warning.pages.join("・")}ページ`)
     .join("\n");
 
   const checkpoints = report.sourceCheckpoints
-    .map((checkpoint) => `- ${checkpoint.pageNumber}ページ: ${checkpoint.reason} / ${checkpoint.excerpt}`)
+    .map((checkpoint) => `- ${checkpoint.pageNumber}ページ: ${checkpoint.reason}`)
     .join("\n");
 
   const numbers = report.extractedNumbers
-    .slice(0, 30)
+    .slice(0, 20)
     .map((item) => `- ${item.label}: ${item.valueText}（${item.pageNumber}ページ）`)
     .join("\n");
 
@@ -88,32 +90,33 @@ export function buildMarkdownReport(report: AnalysisReport): string {
 - 銘柄コード: ${report.ticker || "不明"}
 - 会社名: ${report.companyName || "不明"}
 - 分析日時: ${formatDateTime(report.analyzedAt)}
-- 分析方式: 標準ルール分析 + 無料AI要約
 
-## 一言サマリー
+## サマリー
+**判定**: ${dig.verdictLabel}
 ${report.oneLineSummary}
 
+## 主要数値
+${keyFigures}
+
 ## 無料AI診断
-- 判定: ${report.freeAiDigest?.verdictLabel || "不明"}
-- 要約: ${report.freeAiDigest?.plainSummary || report.freeAiDigest?.headline || report.oneLineSummary}
 
 ### 良い点
-${report.freeAiDigest?.goodPoints?.map((item) => `- ${item}`).join("\n") || "- なし"}
+${dig.goodPoints.map((item) => `- ${item}`).join("\n")}
 
 ### 注意点
-${report.freeAiDigest?.concernPoints?.map((item) => `- ${item}`).join("\n") || "- なし"}
+${dig.concernPoints.map((item) => `- ${item}`).join("\n")}
 
-## 主要トピック
-${topics}
+## 検出トピック
+${topics || "- 主要トピックは検出されませんでした"}
 
-## 注意ポイント
-${warnings || "強い注意語句は自動検出されませんでした。"}
+## 注意語句
+${warnings || "- 強い注意語句は検出されませんでした"}
 
-## 根拠ページ・読みどころ
-${checkpoints || "根拠ページ候補は自動検出されませんでした。"}
+## 原文確認ページ
+${checkpoints || "- 根拠ページ候補は自動検出されませんでした"}
 
-## 抽出数値
-${numbers || "数値候補は自動抽出されませんでした。"}
+## 抽出数値候補
+${numbers || "- 数値候補は自動抽出されませんでした"}
 
 ## 免責事項
 ${report.disclaimer}
