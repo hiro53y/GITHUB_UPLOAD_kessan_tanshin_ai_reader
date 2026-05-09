@@ -29,6 +29,7 @@
 - [x] 修正後の `npm run build` が成功
 - [x] 修正後の `npm run dev -- --smoke` が成功
 - [x] ローカル開発サーバーで `/` と `/api/proxy?url=...I_head` がHTTP 200を返す
+- [x] Service Worker cache名を更新し、旧cache削除とassets network-firstを実装
 
 ## 未実施
 

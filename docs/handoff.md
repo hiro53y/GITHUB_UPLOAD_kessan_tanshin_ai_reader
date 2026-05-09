@@ -24,6 +24,7 @@ GitHubへアップロードする対象は `deliverables/GITHUB_UPLOAD_kessan_ta
 - レポートの確認誘導文言を「根拠ページ・読みどころ」に変更
 - 外部APIなしの無料AI要約カードを追加
 - Yahoo!ファイナンスの銘柄コード検索リンクをホームに追加
+- PWAのService Worker cacheを更新し、古い画面が残る問題を修正
 
 ## 未完了
 
@@ -41,3 +42,4 @@ GitHubへアップロードする対象は `deliverables/GITHUB_UPLOAD_kessan_ta
 - `deliverables/kessan_tanshin_ai_reader/`、`deliverables/kessan_tanshin_ai_reader_clean/`、`deliverables/UPLOAD_THIS_TO_GITHUB_kessan_tanshin_ai_reader/` は作業途中の旧フォルダ。OneDriveのロックや重複コピーが残ったため、GitHubへはアップロードしない。
 - ローカルでの再 `npm install` / クリーン `npm ci` はOneDrive配下のEPERMで失敗する場合がある。Cloudflare Pages側ではリポジトリ直下で `npm run build` を実行する。
 - `node_modules/`、`dist/`、`.npm-cache/`、`.npm-pack-cache/`、`.manual-rollup/` はGitHubアップロード対象外。`.gitignore` に含めている。
+- 既にスマホで旧版を開いていた場合、初回アクセス時にService Worker更新で自動リロードされる。まだ旧表示ならChromeのサイトデータ削除または強制再読み込みで確認する。
