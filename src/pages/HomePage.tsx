@@ -1,4 +1,4 @@
-import { BarChart3, ClipboardCopy, FileUp, Link, Search, ShieldAlert } from "lucide-react";
+import { BarChart3, ClipboardCopy, ExternalLink, FileUp, Link, Search, ShieldAlert } from "lucide-react";
 import { useRef, useState } from "react";
 import type { HistoryItem } from "../lib/types";
 import { formatDateTime } from "../lib/utils";
@@ -23,6 +23,10 @@ export function HomePage({
   const [companyName, setCompanyName] = useState("");
   const [pdfUrl, setPdfUrl] = useState("");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const openYahooCodeSearch = () => {
+    const query = encodeURIComponent(companyName || ticker || "");
+    window.open(`https://finance.yahoo.co.jp/search/?query=${query}`, "_blank", "noopener,noreferrer");
+  };
 
   return (
     <div className="space-y-4">
@@ -64,6 +68,10 @@ export function HomePage({
               className="h-13 w-full rounded-xl border border-blue-200 px-4 text-lg text-slate-950 outline-none focus:border-brand-600"
             />
           </label>
+          <OutlineButton onClick={openYahooCodeSearch}>
+            <ExternalLink className="h-5 w-5" />
+            Yahoo!ファイナンスで銘柄コード検索
+          </OutlineButton>
           <PrimaryButton onClick={() => onAnalyzeTicker(ticker, companyName || undefined)}>
             <Search className="h-5 w-5" />
             最新決算短信を取得して分析
@@ -101,7 +109,7 @@ export function HomePage({
               ["2. SELECT", "候補選定"],
               ["3. DOWNLOAD", "PDF取得"],
               ["4. EXTRACT", "テキスト抽出"],
-              ["5. ANALYZE", "標準分析"]
+              ["5. ANALYZE", "無料AI要約"]
             ].map(([title, label]) => (
               <div key={title} className="rounded-xl border border-emerald-100 bg-emerald-50 px-1 py-3">
                 <div className="text-[11px]">{title}</div>
@@ -129,14 +137,14 @@ export function HomePage({
               <div className="break-words text-lg font-bold text-slate-950">{latestHistory.companyName || "手動PDF資料"}</div>
               <div className="text-sm text-slate-500">取得日時: {formatDateTime(latestHistory.analyzedAt)}</div>
             </div>
-            <StatusBadge tone={latestHistory.status === "success" ? "green" : "orange"}>{latestHistory.status === "success" ? "分析完了" : "要確認"}</StatusBadge>
+            <StatusBadge tone={latestHistory.status === "success" ? "green" : "orange"}>{latestHistory.status === "success" ? "分析完了" : "注意あり"}</StatusBadge>
           </button>
         </Card>
       ) : null}
 
       <Card title="注意事項" icon={<ShieldAlert className="h-5 w-5" />}>
         <p className="leading-7 text-slate-700">
-          本アプリは投資助言ではありません。決算短信を読むための補助ツールです。抽出・分析結果には誤りが含まれる可能性があります。最終確認は必ずTDnet、企業IR、決算短信原文で行ってください。
+          本アプリは投資助言ではありません。決算短信を読むための補助ツールです。PDFから抽出できたテキストをもとに、無料AI要約と標準ルール分析で内容を整理します。
         </p>
       </Card>
 

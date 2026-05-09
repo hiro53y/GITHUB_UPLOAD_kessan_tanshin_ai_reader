@@ -18,6 +18,7 @@
 - 取得ロジックは `src/lib/disclosureFetcher.ts` に集約する。
 - PDF解析は `pdfjs-dist` を使う。
 - 分析は標準ルール分析だけで完結させる。
+- 無料AI要約は外部APIなしの端末内抽出型要約として扱う。
 - 履歴と設定はlocalStorageを使う。
 
 ## 検証ルール
@@ -34,7 +35,7 @@
 - `out/` は中間生成物とログ。
 - アプリ成果物は `deliverables/` 直下にGitHubアップロード用の1フォルダとして保存する。
 - その1フォルダをGitHubリポジトリのルートとしてアップロードすれば、Cloudflare Pagesでビルドできる状態にする。
-- GitHubアップロード用フォルダには `src/`、`public/`、`worker/`、`scripts/`、設定ファイル、README、AGENTS、TASKSを含める。
+- GitHubアップロード用フォルダには `src/`、`public/`、`functions/`、`worker/`、`scripts/`、設定ファイル、README、AGENTS、TASKSを含める。
 - GitHubアップロード用フォルダには `node_modules/`、`dist/`、`out/`、`.npm-cache/`、`.wrangler/`、二重の `github_upload/` を含めない。
 - 既存の `deliverables/` 内ファイルは上書きしない。
 - `CLAUDE.md` は変更しない。

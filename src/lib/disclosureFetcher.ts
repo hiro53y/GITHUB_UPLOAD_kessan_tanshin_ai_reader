@@ -19,7 +19,7 @@ type SearchDate = {
 };
 
 const SEARCH_ERROR_MESSAGE =
-  "TDnet公開ページまたはproxyにアクセスできませんでした。手動PDFアップロード、またはPDF URL貼り付けで続行してください。";
+  "TDnet公開ページまたはproxyにアクセスできませんでした。Cloudflare Pagesで公開する場合は同梱の/api/proxyを使えます。手動PDFアップロード、またはPDF URL貼り付けでも続行できます。";
 
 function parseYmd(value: string): Date {
   return new Date(`${value.slice(0, 4)}-${value.slice(4, 6)}-${value.slice(6, 8)}T00:00:00+09:00`);
@@ -46,6 +46,30 @@ function parseSearchDates(html: string): SearchDate[] {
       date: parseYmd(option.value)
     }))
     .filter((item) => /^\d{8}$/.test(item.value));
+}
+
+function formatYmd(date: Date): string {
+  const parts = new Intl.DateTimeFormat("ja-JP", {
+    timeZone: "Asia/Tokyo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(date);
+  const get = (type: string) => parts.find((part) => part.type === type)?.value || "";
+  return `${get("year")}${get("month")}${get("day")}`;
+}
+
+function buildRecentSearchDates(days = 31): SearchDate[] {
+  const today = new Date();
+  return Array.from({ length: days }, (_, index) => {
+    const date = new Date(today.getTime() - index * 24 * 60 * 60 * 1000);
+    const value = formatYmd(date);
+    return {
+      value,
+      label: value,
+      date: parseYmd(value)
+    };
+  });
 }
 
 function filterDatesByLookback(dates: SearchDate[], lookbackDays: number): SearchDate[] {
@@ -124,8 +148,13 @@ function buildResult(
 }
 
 async function getAvailableDates(): Promise<SearchDate[]> {
-  const { text } = await fetchTextWithFallback(TDNET_SEARCH_HEAD_URL);
-  return parseSearchDates(text);
+  try {
+    const { text } = await fetchTextWithFallback(TDNET_SEARCH_HEAD_URL);
+    const parsed = parseSearchDates(text);
+    return parsed.length ? parsed : buildRecentSearchDates();
+  } catch {
+    return buildRecentSearchDates();
+  }
 }
 
 async function searchByKeyword(

@@ -158,7 +158,7 @@ export default function App() {
               ...current,
               status: "manual_required",
               errorMessage: message,
-              userMessage: "PDFの自動取得に失敗しました。TDnetまたは企業IRページからPDFをダウンロードし、手動アップロードしてください。"
+              userMessage: "PDFの自動取得に失敗しました。Cloudflare Pagesの/api/proxyまたはWorker設定で改善できる場合があります。手動アップロードでも続行できます。"
             }
           : {
               status: "manual_required",
@@ -168,7 +168,7 @@ export default function App() {
               source: "manual",
               candidates: [],
               errorMessage: message,
-              userMessage: "PDFの取得またはテキスト抽出に失敗しました。別のPDFを手動アップロードしてください。"
+              userMessage: "PDFの取得またはテキスト抽出に失敗しました。URLの配信元制限が原因の場合は、PDFファイルを手動アップロードしてください。"
             }
       );
       setActive("fetch");
@@ -347,7 +347,7 @@ export default function App() {
     if (active === "report") return { title: detailReport ? "詳細レポート" : "決算分析レポート", sub: report?.companyName ? `${report.ticker || ""} ${report.companyName}` : "標準ルール分析" };
     if (active === "history") return { title: "分析履歴", sub: "保存済みレポート" };
     if (active === "settings") return { title: "設定", sub: "取得・分析オプション" };
-    return { title: "決算短信AIリーダー", sub: "build: 2026-05-09.1" };
+    return { title: "決算短信AIリーダー", sub: "build: 2026-05-09.2" };
   })();
 
   return (

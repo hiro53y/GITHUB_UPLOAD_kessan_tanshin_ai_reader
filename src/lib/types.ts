@@ -84,6 +84,18 @@ export type ExtractedNumber = {
   context: string;
 };
 
+export type FreeAiDigest = {
+  headline: string;
+  bullets: string[];
+  topicSummaries: Array<{
+    category: TopicCategory | "総合";
+    summary: string;
+    pages: number[];
+  }>;
+  keyFigures: string[];
+  method: string;
+};
+
 export type AnalysisReport = {
   ticker?: string;
   companyName?: string;
@@ -96,6 +108,7 @@ export type AnalysisReport = {
   warnings: WarningItem[];
   sourceCheckpoints: SourceCheckpoint[];
   extractedNumbers: ExtractedNumber[];
+  freeAiDigest: FreeAiDigest;
   aiPrompt: string;
   disclaimer: string;
 };

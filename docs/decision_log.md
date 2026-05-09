@@ -11,3 +11,5 @@
 - 独自ビルドに `process.env.NODE_ENV` / `import.meta.env` 置換を追加した。理由: Vite CLIを使わないビルドでは置換が自動で行われず、ブラウザ実行時にクラッシュする可能性があったため。
 - GitHubアップロード対象は `deliverables/GITHUB_UPLOAD_kessan_tanshin_ai_reader/` の1フォルダにした。理由: ユーザー要件として、`deliverables/` 直下の1フォルダをGitHubへアップロードすればCloudflare Pagesで使える形が求められたため。`node_modules/`、`dist/`、`out/` は含めない。
 - ビルドスクリプトから `@rollup/plugin-node-resolve` への直接importを外し、Node標準の `require.resolve` を使う軽量resolverへ置き換えた。あわせて `.node-version` / `.nvmrc` でNode.js 20系を指定した。理由: 推移依存だけに頼る直接importはCloudflareのクリーン環境で解決できない可能性があったため。
+- Cloudflare Pages Functionsの `/api/proxy` を追加し、PDF URL取得とTDnet取得のfallbackに入れた。理由: GitHub + Cloudflare Pages公開時に、別Worker URLを設定しなくても同一オリジンproxyでCORS失敗を回避しやすくするため。
+- 無料AI要約は外部LLM APIではなく端末内の抽出型要約として実装した。理由: ユーザーは無料AI機能を求めている一方、外部LLM APIやAPIキー欄は実装しない方針が維持されているため。

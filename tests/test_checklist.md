@@ -22,9 +22,17 @@
 - [x] `node node_modules/typescript/bin/tsc --noEmit -p deliverables/GITHUB_UPLOAD_kessan_tanshin_ai_reader/tsconfig.json` が成功
 - [x] `scripts/build.mjs` の未宣言依存 `@rollup/plugin-node-resolve` をローカルresolverに置換
 - [x] `.node-version` / `.nvmrc` でNode.js 20を指定
+- [x] Cloudflare Pages Functions proxy `functions/api/proxy.ts` を追加
+- [x] PDF URL取得fallbackに `/api/proxy` を追加
+- [x] 無料AI要約を外部APIなしで実装
+- [x] Yahoo!ファイナンス銘柄コード検索リンクを追加
+- [x] 修正後の `npm run build` が成功
+- [x] 修正後の `npm run dev -- --smoke` が成功
+- [x] ローカル開発サーバーで `/` と `/api/proxy?url=...I_head` がHTTP 200を返す
 
 ## 未実施
 
+- [ ] このOneDrive環境での再 `npm install` はEPERMで失敗。Cloudflare Pagesなどクリーン環境で再確認する。
 - [ ] Android実機Chromeでの表示確認
 - [ ] ホーム画面追加後の起動確認
 - [ ] 実PDFアップロードによる手動分析の実機操作確認
@@ -35,3 +43,5 @@
 ## 補足
 
 in-app Browserで `localhost:5173` 操作がセキュリティポリシーにより拒否されたため、スマホ幅の視覚確認は未実施。
+
+2026-05-09の追加検証で `npm install --ignore-scripts --no-bin-links --no-audit --no-fund` とローカルcache指定の再インストールは、OneDrive配下の `node_modules` / npm cache のEPERMで失敗した。`node_modules` はGitHubアップロード対象外であり、`npm run build` と `npm run dev -- --smoke` は修復後に成功している。

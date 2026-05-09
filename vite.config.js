@@ -64,7 +64,7 @@ export default defineConfig({
         ]
       },
       workbox: {
-        navigateFallbackDenylist: [/^\/tdnet/, /^\/tdnet-search/],
+        navigateFallbackDenylist: [/^\/tdnet/, /^\/tdnet-search/, /^\/api\/proxy/],
         runtimeCaching: [
           {
             urlPattern: ({ request }) => request.destination === "document",

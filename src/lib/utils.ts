@@ -86,6 +86,20 @@ function devProxyUrl(url: string): string | undefined {
   }
 }
 
+function isAllowedProxyTarget(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return parsed.hostname === "www.release.tdnet.info" || parsed.hostname === "release.tdnet.info";
+  } catch {
+    return false;
+  }
+}
+
+function pagesProxyUrl(url: string): string | undefined {
+  if (!isAllowedProxyTarget(url)) return undefined;
+  return `/api/proxy?url=${encodeURIComponent(url)}`;
+}
+
 function workerProxyUrl(url: string): string | undefined {
   const proxyUrl = readProxyUrl();
   if (!proxyUrl) return undefined;
@@ -93,13 +107,14 @@ function workerProxyUrl(url: string): string | undefined {
 }
 
 function buildAttempts(url: string): string[] {
-  return [url, workerProxyUrl(url), devProxyUrl(url)].filter(Boolean) as string[];
+  const normalizedUrl = url.trim();
+  return [devProxyUrl(normalizedUrl), pagesProxyUrl(normalizedUrl), workerProxyUrl(normalizedUrl), normalizedUrl].filter(Boolean) as string[];
 }
 
 export async function fetchTextWithFallback(
   url: string,
   initFactory?: () => RequestInit
-): Promise<{ text: string; finalUrl: string; via: "direct" | "worker" | "dev-proxy" }> {
+): Promise<{ text: string; finalUrl: string; via: "direct" | "worker" | "dev-proxy" | "pages-proxy" }> {
   const attempts = buildAttempts(url);
   const errors: string[] = [];
 
@@ -111,10 +126,20 @@ export async function fetchTextWithFallback(
       });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const text = await response.text();
+      if (attemptUrl.startsWith("/api/proxy") && text.includes("<title>決算短信AIリーダー</title>")) {
+        throw new Error("Cloudflare Pages Functions proxyが有効ではありません");
+      }
       return {
         text,
         finalUrl: attemptUrl,
-        via: attemptUrl === url ? "direct" : attemptUrl.startsWith("/tdnet") ? "dev-proxy" : "worker"
+        via:
+          attemptUrl === url.trim()
+            ? "direct"
+            : attemptUrl.startsWith("/tdnet")
+              ? "dev-proxy"
+              : attemptUrl.startsWith("/api/proxy")
+                ? "pages-proxy"
+                : "worker"
       };
     } catch (error) {
       errors.push(`${attemptUrl}: ${error instanceof Error ? error.message : String(error)}`);
@@ -132,6 +157,10 @@ export async function fetchArrayBufferWithFallback(url: string): Promise<ArrayBu
     try {
       const response = await fetch(attemptUrl, { cache: "force-cache" });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const contentType = response.headers.get("content-type") || "";
+      if (attemptUrl.startsWith("/api/proxy") && /\.pdf(?:$|\?)/i.test(url) && contentType.includes("text/html")) {
+        throw new Error("Cloudflare Pages Functions proxyが有効ではありません");
+      }
       return await response.arrayBuffer();
     } catch (error) {
       errors.push(`${attemptUrl}: ${error instanceof Error ? error.message : String(error)}`);

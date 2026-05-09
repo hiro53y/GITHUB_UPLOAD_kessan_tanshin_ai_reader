@@ -1,4 +1,4 @@
-import { ArrowLeft, BarChart3, ClipboardCopy, ExternalLink, FileText, Grid2X2, ListChecks } from "lucide-react";
+import { ArrowLeft, BarChart3, ClipboardCopy, ExternalLink, FileText, Grid2X2, ListChecks, Sparkles } from "lucide-react";
 import { NumberTable } from "../components/NumberTable";
 import { ReportSection } from "../components/ReportSection";
 import { WarningCard } from "../components/WarningCard";
@@ -9,7 +9,7 @@ import { formatDateTime } from "../lib/utils";
 
 function topicStatus(topic: AnalysisReport["topics"][number]) {
   if (!topic.detected) return <StatusBadge tone="gray">未検出</StatusBadge>;
-  if (topic.category === "リスク・注記") return <StatusBadge tone="orange">要確認</StatusBadge>;
+  if (topic.category === "リスク・注記") return <StatusBadge tone="orange">注意語句</StatusBadge>;
   return <StatusBadge tone="green">検出</StatusBadge>;
 }
 
@@ -40,6 +40,13 @@ export function ReportPage({
 
   const markdown = buildMarkdownReport(report);
   const detectedTopics = report.topics.filter((topic) => topic.detected);
+  const digest = report.freeAiDigest || {
+    headline: report.oneLineSummary,
+    bullets: [`検出トピック: ${detectedTopics.map((topic) => topic.category).join("、") || "少なめ"}`],
+    topicSummaries: detectedTopics.slice(0, 4).map((topic) => ({ category: topic.category, summary: topic.comment, pages: topic.pages })),
+    keyFigures: report.extractedNumbers.slice(0, 5).map((item) => `${item.label}: ${item.valueText}（${item.pageNumber}P）`),
+    method: "無料AI要約（保存済みレポート互換表示）"
+  };
 
   if (detail) {
     return (
@@ -63,7 +70,7 @@ export function ReportPage({
           <NumberTable numbers={report.extractedNumbers} />
         </ReportSection>
 
-        <ReportSection title="原文確認ページ">
+        <ReportSection title="根拠ページ・読みどころ">
           <div className="overflow-hidden rounded-xl border border-blue-100">
             {report.sourceCheckpoints.map((checkpoint) => (
               <div key={`${checkpoint.pageNumber}-${checkpoint.reason}`} className="grid grid-cols-[78px_1fr] border-b border-blue-100 last:border-b-0">
@@ -82,9 +89,9 @@ export function ReportPage({
             <ClipboardCopy className="h-5 w-5" />
             Markdownをコピー
           </OutlineButton>
-          <OutlineButton onClick={() => onCopy("原文確認リスト", report.sourceCheckpoints.map((item) => `${item.pageNumber}ページ: ${item.reason}`).join("\n"))}>
+          <OutlineButton onClick={() => onCopy("根拠ページリスト", report.sourceCheckpoints.map((item) => `${item.pageNumber}ページ: ${item.reason}`).join("\n"))}>
             <FileText className="h-5 w-5" />
-            原文リストをコピー
+            根拠リストをコピー
           </OutlineButton>
         </div>
       </div>
@@ -108,7 +115,34 @@ export function ReportPage({
                     : "判定不明"}
           </StatusBadge>
           <StatusBadge tone="blue">信頼度: {report.confidence === "high" ? "高" : report.confidence === "medium" ? "中" : "低"}</StatusBadge>
-          <StatusBadge tone="orange">原文確認推奨</StatusBadge>
+          <StatusBadge tone="blue">無料AI要約</StatusBadge>
+        </div>
+      </Card>
+
+      <Card title="無料AI要約" icon={<Sparkles className="h-5 w-5" />} action={<StatusBadge tone="blue">API不要</StatusBadge>}>
+        <div className="space-y-3">
+          <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 text-base font-bold leading-7 text-slate-950">
+            {digest.headline}
+          </div>
+          <ul className="space-y-2 text-sm leading-6 text-slate-700">
+            {digest.bullets.map((bullet) => (
+              <li key={bullet} className="rounded-xl bg-slate-50 px-3 py-2">
+                {bullet}
+              </li>
+            ))}
+          </ul>
+          <div className="space-y-2">
+            {digest.topicSummaries.slice(0, 4).map((item) => (
+              <div key={`${item.category}-${item.pages.join("-")}`} className="rounded-xl border border-blue-100 p-3">
+                <div className="mb-1 flex items-center justify-between gap-2">
+                  <span className="font-bold text-slate-950">{item.category}</span>
+                  {item.pages.length ? <span className="text-sm font-bold text-brand-600">{item.pages.join("、")}P</span> : null}
+                </div>
+                <p className="text-sm leading-6 text-slate-700">{item.summary}</p>
+              </div>
+            ))}
+          </div>
+          <p className="text-xs font-bold text-slate-500">{digest.method}</p>
         </div>
       </Card>
 
@@ -168,7 +202,7 @@ export function ReportPage({
         </Card>
       ) : null}
 
-      <ReportSection title="原文確認ポイント" action={<ListChecks className="h-5 w-5 text-brand-600" />}>
+      <ReportSection title="根拠ページ・読みどころ" action={<ListChecks className="h-5 w-5 text-brand-600" />}>
         <div className="overflow-hidden rounded-xl border border-blue-100">
           {report.sourceCheckpoints.slice(0, 5).map((checkpoint) => (
             <div key={`${checkpoint.pageNumber}-${checkpoint.reason}`} className="grid grid-cols-[76px_1fr] border-b border-blue-100 last:border-b-0">
@@ -181,9 +215,9 @@ export function ReportPage({
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <PrimaryButton onClick={() => onDetailChange(true)}>詳細を見る</PrimaryButton>
-        <OutlineButton onClick={() => onCopy("AI用プロンプト", report.aiPrompt)}>
+        <OutlineButton onClick={() => onCopy("AI貼り付け用プロンプト", report.aiPrompt)}>
           <ClipboardCopy className="h-5 w-5" />
-          AI用プロンプトをコピー
+          AI貼り付け用プロンプトをコピー
         </OutlineButton>
       </div>
 

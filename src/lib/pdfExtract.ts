@@ -37,9 +37,9 @@ export async function extractPdfText(input: File | ArrayBuffer | string): Promis
 
   const rawText = pages.map((page) => `--- ${page.pageNumber}ページ ---\n${page.text}`).join("\n\n");
   if (rawText.replace(/\s/g, "").length < 500) {
-    warnings.push("抽出できた文字数が少なすぎます。原文PDFを必ず確認してください。");
+    warnings.push("抽出できた文字数が少ないため、画像PDFまたは保護PDFの可能性があります。読み取れた範囲で要約します。");
   }
-  warnings.push("PDFの表はテキスト抽出時に行・列が崩れる可能性があります。数値は必ず原文で確認してください。");
+  warnings.push("PDFの表はテキスト抽出時に行・列が崩れる可能性があります。数値は抽出できたテキスト上の候補として表示します。");
 
   return {
     pages,

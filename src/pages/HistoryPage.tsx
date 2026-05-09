@@ -30,7 +30,7 @@ export function HistoryPage({
         {[
           ["all", "すべて"],
           ["success", "成功"],
-          ["warning", "要確認"]
+          ["warning", "注意あり"]
         ].map(([key, label]) => (
           <button
             key={key}
@@ -59,7 +59,7 @@ export function HistoryPage({
                     <div className="text-sm text-slate-500">{formatDateTime(item.analyzedAt)}</div>
                     <div className="mt-1 line-clamp-2 text-sm text-slate-600">{item.oneLineSummary}</div>
                   </div>
-                  <StatusBadge tone={item.warningCount > 0 ? "orange" : "green"}>{item.warningCount > 0 ? "要確認" : "分析完了"}</StatusBadge>
+                  <StatusBadge tone={item.warningCount > 0 ? "orange" : "green"}>{item.warningCount > 0 ? "注意あり" : "分析完了"}</StatusBadge>
                   <ChevronRight className="h-6 w-6 shrink-0 text-slate-500" />
                 </button>
                 <button type="button" aria-label="削除" onClick={() => onDelete(item.id)} className="grid h-10 w-10 shrink-0 place-items-center rounded-xl text-red-500">

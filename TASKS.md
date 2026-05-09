@@ -17,6 +17,10 @@
 - [x] Cloudflare Pages/Workers公開用ファイルを追加する
 - [x] 独自ビルド成果物のブラウザ実行時クラッシュ要因を修正する
 - [x] `deliverables/` 直下にGitHubアップロード用の単一フォルダを作成する
+- [x] Cloudflare Pages Functions proxyを追加してPDF URL取得を改善する
+- [x] 外部APIなしの無料AI要約を追加する
+- [x] Yahoo!ファイナンス銘柄コード検索リンクを追加する
+- [x] レポート内の原文確認誘導を根拠ページ表示へ変更する
 
 ## 未完了
 

@@ -21,7 +21,7 @@ export function SettingsPage({
       <SettingsPanel settings={settings} onChange={onChange} historyCount={historyCount} storageSize={storageSize} onClearHistory={onClearHistory} />
       <Card title="免責事項" icon={<ShieldCheck className="h-5 w-5" />}>
         <p className="leading-7 text-slate-700">
-          本アプリは、決算資料を読むための補助ツールです。投資助言、売買推奨、将来の株価予測を行うものではありません。抽出結果や分析には誤りが含まれる可能性があります。投資判断を行う場合は、必ず公式資料、TDnet、企業IR、決算短信、有価証券報告書等の原文を確認してください。
+          本アプリは、決算資料を読むための補助ツールです。投資助言、売買推奨、将来の株価予測を行うものではありません。抽出・要約は自動処理のため誤差を含む可能性があります。
         </p>
       </Card>
       <Card title="バージョン情報">
@@ -32,11 +32,15 @@ export function SettingsPage({
           </div>
           <div className="flex justify-between">
             <span className="font-bold">build</span>
-            <span>2026-05-09.1</span>
+            <span>2026-05-09.2</span>
           </div>
           <div className="flex justify-between">
             <span className="font-bold">外部AI API</span>
             <span>使用しない</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="font-bold">無料AI要約</span>
+            <span>端末内処理</span>
           </div>
         </div>
       </Card>

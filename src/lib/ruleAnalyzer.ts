@@ -56,15 +56,15 @@ const topicKeywords: Record<TopicCategory, string[]> = {
 };
 
 const warningRules: Array<{ label: string; keywords: string[]; level: WarningItem["level"]; comment: string }> = [
-  { label: "減収", keywords: ["減収"], level: "medium", comment: "売上の減少に関する記載があるため、該当箇所を原文で確認してください。" },
-  { label: "減益", keywords: ["減益"], level: "medium", comment: "利益の減少に関する記載があるため、要因と一過性の有無を確認してください。" },
-  { label: "下方修正", keywords: ["下方修正"], level: "high", comment: "業績予想の下方修正に関する記載があるため、修正理由を確認してください。" },
-  { label: "赤字・損失", keywords: ["赤字", "営業損失", "経常損失", "純損失", "赤字転落"], level: "high", comment: "損失または赤字に関する記載があるため、継続性と改善策を確認してください。" },
-  { label: "減配・無配", keywords: ["減配", "無配"], level: "high", comment: "配当の減少または無配に関する記載があるため、配当方針を確認してください。" },
-  { label: "継続企業の前提", keywords: ["継続企業の前提"], level: "high", comment: "継続企業の前提に関する注記がある場合は重要な確認対象です。" },
-  { label: "重要な後発事象", keywords: ["重要な後発事象"], level: "medium", comment: "期末後の重要事象が記載されている可能性があります。" },
-  { label: "不確実性", keywords: ["不確実性", "合理的な算定が困難"], level: "medium", comment: "見通しや前提の不確実性に関する記載を確認してください。" },
-  { label: "減損・訴訟", keywords: ["減損", "訴訟"], level: "medium", comment: "損失発生や法的リスクに関する記載がないか確認してください。" }
+  { label: "減収", keywords: ["減収"], level: "medium", comment: "売上の減少に関する記載があります。対象期間、事業領域、主な要因を中心に要約します。" },
+  { label: "減益", keywords: ["減益"], level: "medium", comment: "利益の減少に関する記載があります。費用増、売上構成、為替などの要因を中心に要約します。" },
+  { label: "下方修正", keywords: ["下方修正"], level: "high", comment: "業績予想の下方修正に関する記載があります。修正理由と前提条件を中心に要約します。" },
+  { label: "赤字・損失", keywords: ["赤字", "営業損失", "経常損失", "純損失", "赤字転落"], level: "high", comment: "損失または赤字に関する記載があります。発生要因と改善策の記載を中心に要約します。" },
+  { label: "減配・無配", keywords: ["減配", "無配"], level: "high", comment: "配当の減少または無配に関する記載があります。配当方針と業績前提の記載を中心に要約します。" },
+  { label: "継続企業の前提", keywords: ["継続企業の前提"], level: "high", comment: "継続企業の前提に関する注記語句が検出されました。財務面の重要な注記として扱います。" },
+  { label: "重要な後発事象", keywords: ["重要な後発事象"], level: "medium", comment: "期末後の重要事象に関する記載候補があります。決算期後の変化として要約します。" },
+  { label: "不確実性", keywords: ["不確実性", "合理的な算定が困難"], level: "medium", comment: "見通しや前提の不確実性に関する記載があります。業績予想の前提として扱います。" },
+  { label: "減損・訴訟", keywords: ["減損", "訴訟"], level: "medium", comment: "減損または訴訟に関する記載があります。費用・損失・リスク要因として要約します。" }
 ];
 
 const checkpointRules: Array<{ reason: string; keywords: string[] }> = [
@@ -111,6 +111,21 @@ function excerptAround(text: string, keyword: string, maxLength = 120): string {
   return compactText(text.slice(start, start + maxLength), maxLength);
 }
 
+function normalizeExcerpt(value?: string): string {
+  return compactText((value || "").replace(/[　\s]+/g, " "), 96);
+}
+
+function topicComment(category: TopicCategory, detected: boolean, excerpts: string[], keywords: string[]): string {
+  if (!detected) {
+    return `${category}に関連する主要語句は自動検出できませんでした。PDFの表崩れや表記差異により、要約対象から外れている可能性があります。`;
+  }
+  const lead = normalizeExcerpt(excerpts[0]);
+  const keywordText = keywords.slice(0, 4).join("、");
+  return lead
+    ? `${category}では「${keywordText}」に関連する記載があり、${lead} という内容が読み取れます。`
+    : `${category}では「${keywordText}」に関連する記載が検出されました。`;
+}
+
 function analyzeTopics(pages: Array<{ pageNumber: number; text: string }>): TopicAnalysis[] {
   return (Object.entries(topicKeywords) as Array<[TopicCategory, string[]]>).map(([category, keywords]) => {
     const hits = findKeywordPages(pages, keywords);
@@ -124,9 +139,7 @@ function analyzeTopics(pages: Array<{ pageNumber: number; text: string }>): Topi
       keywords: detectedKeywords,
       pages: pageNumbers,
       excerpts,
-      comment: detected
-        ? `${category}に関連する語句が検出されました。数値や前提条件は該当ページの原文で確認してください。`
-        : `${category}に関連する主要語句は自動検出できませんでした。PDFの表崩れや表記差異の可能性があります。`
+      comment: topicComment(category, detected, excerpts, detectedKeywords)
     };
   });
 }
@@ -224,13 +237,66 @@ function buildSummary(topics: TopicAnalysis[], warnings: WarningItem[]): string 
   const detected = topics.filter((topic) => topic.detected).map((topic) => topic.category);
   const warningLabels = warnings.map((warning) => warning.label);
   if (!detected.length) {
-    return "抽出テキストから主要トピックを十分に検出できませんでした。PDFの原文確認を優先してください。";
+    return "抽出テキストから主要トピックを十分に検出できませんでした。画像PDFや表中心の資料では、読み取れた文字情報だけを対象に要約します。";
   }
   const first = `最新資料では、${detected.slice(0, 6).join("・")}に関する記載が確認されました。`;
   const second = warningLabels.length
-    ? `${warningLabels.slice(0, 3).join("・")}に関する注意語句もあるため、該当ページの原文確認が必要です。`
-    : "強い注意語句は自動検出されませんでしたが、数値と前提条件は原文で確認してください。";
+    ? `${warningLabels.slice(0, 3).join("・")}に関する注意語句も検出されており、要因と前提条件を重点的に整理しています。`
+    : "強い注意語句は自動検出されず、検出できた範囲では主要項目を中心に整理できます。";
   return `${first}${second}`;
+}
+
+function buildFreeAiDigest(
+  topics: TopicAnalysis[],
+  warnings: WarningItem[],
+  numbers: ExtractedNumber[]
+): AnalysisReport["freeAiDigest"] {
+  const detectedTopics = topics.filter((topic) => topic.detected);
+  const detectedNames = detectedTopics.map((topic) => topic.category);
+  const warningNames = warnings.map((warning) => warning.label);
+  const keyFigures = numbers
+    .slice(0, 8)
+    .map((item) => `${item.label}: ${item.valueText}（${item.pageNumber}P）`);
+
+  const headline = detectedNames.length
+    ? `${detectedNames.slice(0, 4).join("・")}を中心に、決算短信の主要論点を抽出しました。`
+    : "読み取れた文字情報が少ないため、検出できた範囲で要点を抽出しました。";
+
+  const bullets = [
+    detectedNames.length
+      ? `検出トピック: ${detectedNames.slice(0, 6).join("、")}`
+      : "主要トピックの検出数が少なく、画像PDFまたは表中心の資料である可能性があります。",
+    warningNames.length
+      ? `注意語句: ${warningNames.slice(0, 5).join("、")}`
+      : "強い注意語句は自動検出されませんでした。",
+    keyFigures.length
+      ? `数値候補: ${keyFigures.slice(0, 3).join(" / ")}`
+      : "数値候補は少なめです。PDFの表構造により抽出されにくい場合があります。"
+  ];
+
+  const topicSummaries: AnalysisReport["freeAiDigest"]["topicSummaries"] = detectedTopics.slice(0, 8).map((topic) => ({
+    category: topic.category,
+    summary: topic.excerpts.length
+      ? `${topic.category}の記載として、${normalizeExcerpt(topic.excerpts[0])}`
+      : topic.comment,
+    pages: topic.pages
+  }));
+
+  if (!topicSummaries.length) {
+    topicSummaries.push({
+      category: "総合",
+      summary: "決算短信から十分な文章を抽出できなかったため、アップロードPDFの文字埋め込み状態に依存します。",
+      pages: []
+    });
+  }
+
+  return {
+    headline,
+    bullets,
+    topicSummaries,
+    keyFigures,
+    method: "無料AI要約（外部APIなし・端末内の抽出型要約）"
+  };
 }
 
 export function analyzeDisclosureText(input: {
@@ -247,6 +313,7 @@ export function analyzeDisclosureText(input: {
   const extractedNumbers = extractNumbers(pages);
   const detectedTopicCount = topics.filter((topic) => topic.detected).length;
   const oneLineSummary = buildSummary(topics, warnings);
+  const freeAiDigest = buildFreeAiDigest(topics, warnings, extractedNumbers);
 
   const aiPrompt = buildAiPrompt({
     ticker: input.ticker || input.disclosure?.ticker,
@@ -270,6 +337,7 @@ export function analyzeDisclosureText(input: {
     warnings,
     sourceCheckpoints,
     extractedNumbers,
+    freeAiDigest,
     aiPrompt,
     disclaimer: DISCLAIMER
   };

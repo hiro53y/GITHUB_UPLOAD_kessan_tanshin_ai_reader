@@ -28,6 +28,20 @@ async function proxyTdnet(req, res) {
     target = "https://www.release.tdnet.info/onsf/TDJFSearch/TDJFSearch";
   } else if (requestUrl.pathname.startsWith("/tdnet/")) {
     target = `https://www.release.tdnet.info${requestUrl.pathname.replace(/^\/tdnet/, "")}${requestUrl.search}`;
+  } else if (requestUrl.pathname === "/api/proxy") {
+    const targetParam = requestUrl.searchParams.get("url");
+    if (!targetParam) {
+      res.writeHead(400, { "Content-Type": "application/json; charset=utf-8", "Access-Control-Allow-Origin": "*" });
+      res.end(JSON.stringify({ error: "missing_url" }));
+      return true;
+    }
+    const parsed = new URL(targetParam);
+    if (!["www.release.tdnet.info", "release.tdnet.info"].includes(parsed.hostname)) {
+      res.writeHead(403, { "Content-Type": "application/json; charset=utf-8", "Access-Control-Allow-Origin": "*" });
+      res.end(JSON.stringify({ error: "host_not_allowed" }));
+      return true;
+    }
+    target = parsed.toString();
   } else {
     return false;
   }

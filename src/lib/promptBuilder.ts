@@ -2,7 +2,7 @@ import type { AnalysisReport, SourceCheckpoint, TopicAnalysis, WarningItem } fro
 import { compactText, formatDateTime } from "./utils";
 
 export const DISCLAIMER =
-  "本アプリは、決算資料を読むための補助ツールです。投資助言、売買推奨、将来の株価予測を行うものではありません。抽出結果や分析には誤りが含まれる可能性があります。投資判断を行う場合は、必ず公式資料、TDnet、企業IR、決算短信、有価証券報告書等の原文を確認してください。";
+  "本アプリは、決算資料を読むための補助ツールです。投資助言、売買推奨、将来の株価予測を行うものではありません。抽出・要約は自動処理のため誤差を含む可能性があります。";
 
 export function buildAiPrompt(input: {
   ticker?: string;
@@ -38,7 +38,7 @@ export function buildAiPrompt(input: {
 - セグメント
 - キャッシュフロー
 - リスク
-- 原文確認ポイント
+- 根拠ページと読みどころ
 
 銘柄コード: ${input.ticker || "不明"}
 会社名: ${input.companyName || "不明"}
@@ -50,13 +50,13 @@ ${topicLines || "- 主要トピックは自動検出できませんでした"}
 注意語句:
 ${warningLines || "- 強い注意語句は自動検出できませんでした"}
 
-原文確認候補:
-${checkpointLines || "- 原文確認候補は自動検出できませんでした"}
+根拠ページ候補:
+${checkpointLines || "- 根拠ページ候補は自動検出できませんでした"}
 
 抽出テキスト:
 ${input.textSample}
 
-必ず、数値は原文確認が必要であること、分析には限界があることを明記してください。`;
+資料を読む補助として、要点、背景、注意語句、数値候補を簡潔に整理してください。`;
 }
 
 export function buildMarkdownReport(report: AnalysisReport): string {
@@ -87,7 +87,7 @@ export function buildMarkdownReport(report: AnalysisReport): string {
 - 銘柄コード: ${report.ticker || "不明"}
 - 会社名: ${report.companyName || "不明"}
 - 分析日時: ${formatDateTime(report.analyzedAt)}
-- 分析方式: 標準ルール分析
+- 分析方式: 標準ルール分析 + 無料AI要約
 
 ## 一言サマリー
 ${report.oneLineSummary}
@@ -98,8 +98,8 @@ ${topics}
 ## 注意ポイント
 ${warnings || "強い注意語句は自動検出されませんでした。"}
 
-## 原文確認ポイント
-${checkpoints || "原文確認ポイントは自動検出されませんでした。"}
+## 根拠ページ・読みどころ
+${checkpoints || "根拠ページ候補は自動検出されませんでした。"}
 
 ## 抽出数値
 ${numbers || "数値候補は自動抽出されませんでした。"}

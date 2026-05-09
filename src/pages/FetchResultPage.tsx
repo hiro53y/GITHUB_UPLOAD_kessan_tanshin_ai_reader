@@ -45,7 +45,7 @@ export function FetchResultPage({
             action={<StatusBadge tone="green">取得成功</StatusBadge>}
           >
             <p className="text-lg font-bold leading-8 text-slate-950">最新の決算関連資料が自動的に選定されました。</p>
-            <p className="mt-2 text-sm text-slate-500">取得日時: {formatDateTime(fetchResult.searchedAt)} / 分析方式: 標準ルール分析</p>
+            <p className="mt-2 text-sm text-slate-500">取得日時: {formatDateTime(fetchResult.searchedAt)} / 分析方式: 標準ルール分析 + 無料AI要約</p>
           </Card>
 
           <Card title="選定された資料" action={<StatusBadge tone="blue">スコア {selectedDisclosure.score}</StatusBadge>}>
@@ -154,7 +154,7 @@ export function FetchResultPage({
                 <ul className="list-disc space-y-1 pl-5 text-sm leading-6 text-slate-700">
                   <li>PDF配信先が一時的に応答していない</li>
                   <li>公開ページ構造が変わり自動取得に失敗した</li>
-                  <li>CORS制限によりブラウザから直接取得できない</li>
+                  <li>CORS制限がある場合は同梱の/api/proxyまたはWorker proxyを経由します</li>
                   <li>TDnet公開閲覧の掲載期間外だった</li>
                 </ul>
               </div>
