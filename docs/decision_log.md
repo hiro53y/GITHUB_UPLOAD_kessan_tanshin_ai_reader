@@ -14,3 +14,4 @@
 - Cloudflare Pages Functionsの `/api/proxy` を追加し、PDF URL取得とTDnet取得のfallbackに入れた。理由: GitHub + Cloudflare Pages公開時に、別Worker URLを設定しなくても同一オリジンproxyでCORS失敗を回避しやすくするため。
 - 無料AI要約は外部LLM APIではなく端末内の抽出型要約として実装した。理由: ユーザーは無料AI機能を求めている一方、外部LLM APIやAPIキー欄は実装しない方針が維持されているため。
 - Service Workerのcache名を更新し、旧cache削除とassetsのnetwork-first取得を追加した。理由: PWAが古い `/assets/app.js` をcache優先で返し、修正後も画面が変わらない状態を避けるため。
+- JS/CSSの出力ファイル名を `app-20260509-3.js` / `index-20260509-3.css` に変更した。理由: 固定名 `/assets/app.js` がブラウザやCloudflare側で残っても、新しいHTMLが別ファイルを読むようにするため。

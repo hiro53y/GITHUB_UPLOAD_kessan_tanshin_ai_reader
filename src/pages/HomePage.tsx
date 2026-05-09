@@ -30,6 +30,13 @@ export function HomePage({
 
   return (
     <div className="space-y-4">
+      <Card title="改修版 2026-05-09.3" action={<StatusBadge tone="green">更新済み</StatusBadge>}>
+        <div className="space-y-2 rounded-xl border border-green-200 bg-green-50 p-3 text-sm font-bold leading-6 text-green-800">
+          <p>無料AI要約、Yahoo!ファイナンス銘柄検索、Cloudflare Pages proxy、根拠ページ表示を反映済みです。</p>
+          <p>このカードが見えていれば、新しい版が表示されています。</p>
+        </div>
+      </Card>
+
       {latestHistory ? (
         <Card
           title="最新分析サマリー"
@@ -42,7 +49,7 @@ export function HomePage({
           <div className="rounded-xl border border-blue-100 bg-blue-50 p-3 text-lg font-bold leading-8 text-slate-950">
             一言サマリー: {latestHistory.oneLineSummary}
           </div>
-          <p className="mt-3 text-sm text-slate-500">最終更新: {formatDateTime(latestHistory.analyzedAt)} / 分析方式: 標準ルール分析</p>
+          <p className="mt-3 text-sm text-slate-500">最終更新: {formatDateTime(latestHistory.analyzedAt)} / 分析方式: 標準ルール分析 + 無料AI要約</p>
         </Card>
       ) : null}
 

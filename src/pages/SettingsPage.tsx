@@ -32,7 +32,7 @@ export function SettingsPage({
           </div>
           <div className="flex justify-between">
             <span className="font-bold">build</span>
-            <span>2026-05-09.2</span>
+            <span>2026-05-09.3 改修版</span>
           </div>
           <div className="flex justify-between">
             <span className="font-bold">外部AI API</span>

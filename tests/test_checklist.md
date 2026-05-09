@@ -30,6 +30,8 @@
 - [x] 修正後の `npm run dev -- --smoke` が成功
 - [x] ローカル開発サーバーで `/` と `/api/proxy?url=...I_head` がHTTP 200を返す
 - [x] Service Worker cache名を更新し、旧cache削除とassets network-firstを実装
+- [x] `dist/index.html` が `/assets/app-20260509-3.js` と `/assets/index-20260509-3.css` を参照している
+- [x] ホーム先頭に「改修版 2026-05-09.3」カードを追加
 
 ## 未実施
 

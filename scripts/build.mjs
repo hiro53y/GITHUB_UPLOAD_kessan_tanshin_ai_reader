@@ -1,5 +1,5 @@
 import { existsSync, statSync } from "node:fs";
-import { copyFile, mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
@@ -16,6 +16,9 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, "..");
 const dist = path.join(root, "dist");
 const assets = path.join(dist, "assets");
+const BUILD_ID = "20260509-3";
+const APP_JS = `app-${BUILD_ID}.js`;
+const APP_CSS = `index-${BUILD_ID}.css`;
 
 async function copyDir(src, dest) {
   try {
@@ -161,10 +164,10 @@ async function buildCss() {
   const input = await readFile(path.join(root, "src", "index.css"), "utf8");
   const result = await postcss([tailwindcss({ config: path.join(root, "tailwind.config.js") }), autoprefixer]).process(input, {
     from: path.join(root, "src", "index.css"),
-    to: path.join(assets, "index.css")
+    to: path.join(assets, APP_CSS)
   });
   await mkdir(assets, { recursive: true });
-  await writeFile(path.join(assets, "index.css"), result.css);
+  await writeFile(path.join(assets, APP_CSS), result.css);
 }
 
 async function buildJs() {
@@ -190,7 +193,7 @@ async function buildJs() {
     dir: dist,
     format: "es",
     sourcemap: false,
-    entryFileNames: "assets/app.js",
+    entryFileNames: `assets/${APP_JS}`,
     chunkFileNames: "assets/[name]-[hash].js",
     assetFileNames: "assets/[name]-[hash][extname]"
   });
@@ -209,22 +212,22 @@ async function writeHtmlAndPwa() {
     <meta name="description" content="決算短信を読むための補助PWA" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="icon" href="/icon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/assets/index.css" />
+    <link rel="stylesheet" href="/assets/${APP_CSS}" />
     <title>決算短信AIリーダー</title>
   </head>
   <body>
     <div id="root"></div>
-    <script type="module" src="/assets/app.js"></script>
+    <script type="module" src="/assets/${APP_JS}"></script>
     <script>
       if ("serviceWorker" in navigator) {
         let reloadedByServiceWorker = false;
         navigator.serviceWorker.addEventListener("controllerchange", () => {
           if (reloadedByServiceWorker) return;
           reloadedByServiceWorker = true;
-          window.location.reload();
+          window.location.replace(window.location.pathname + window.location.search + window.location.hash);
         });
         window.addEventListener("load", () => {
-          navigator.serviceWorker.register("/sw.js").then((registration) => registration.update().catch(() => {})).catch(() => {});
+          navigator.serviceWorker.register("/sw.js?v=${BUILD_ID}").then((registration) => registration.update().catch(() => {})).catch(() => {});
         });
       }
     </script>
@@ -258,9 +261,9 @@ async function writeHtmlAndPwa() {
 
   await writeFile(
     path.join(dist, "sw.js"),
-    `const CACHE = "kessan-reader-v20260509-2";
+    `const CACHE = "kessan-reader-v${BUILD_ID}";
 const CACHE_PREFIX = "kessan-reader-";
-const APP_SHELL = ["/", "/index.html", "/assets/index.css", "/assets/app.js", "/icon.svg", "/maskable-icon.svg"];
+const APP_SHELL = ["/", "/index.html", "/assets/${APP_CSS}", "/assets/${APP_JS}", "/icon.svg", "/maskable-icon.svg"];
 self.addEventListener("install", (event) => {
   self.skipWaiting();
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(APP_SHELL)));
@@ -303,6 +306,10 @@ self.addEventListener("fetch", (event) => {
 
 export async function buildApp() {
   await mkdir(assets, { recursive: true });
+  await Promise.all([
+    rm(path.join(assets, "app.js"), { force: true }).catch(() => {}),
+    rm(path.join(assets, "index.css"), { force: true }).catch(() => {})
+  ]);
   await copyDir(path.join(root, "public"), dist);
   await buildCss();
   await buildJs();

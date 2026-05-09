@@ -25,6 +25,7 @@ GitHubへアップロードする対象は `deliverables/GITHUB_UPLOAD_kessan_ta
 - 外部APIなしの無料AI要約カードを追加
 - Yahoo!ファイナンスの銘柄コード検索リンクをホームに追加
 - PWAのService Worker cacheを更新し、古い画面が残る問題を修正
+- JS/CSSをバージョン付きファイル名に変更し、ホーム先頭に「改修版 2026-05-09.3」カードを追加
 
 ## 未完了
 
@@ -43,3 +44,4 @@ GitHubへアップロードする対象は `deliverables/GITHUB_UPLOAD_kessan_ta
 - ローカルでの再 `npm install` / クリーン `npm ci` はOneDrive配下のEPERMで失敗する場合がある。Cloudflare Pages側ではリポジトリ直下で `npm run build` を実行する。
 - `node_modules/`、`dist/`、`.npm-cache/`、`.npm-pack-cache/`、`.manual-rollup/` はGitHubアップロード対象外。`.gitignore` に含めている。
 - 既にスマホで旧版を開いていた場合、初回アクセス時にService Worker更新で自動リロードされる。まだ旧表示ならChromeのサイトデータ削除または強制再読み込みで確認する。
+- 新版が表示されていれば、ホーム最上部に「改修版 2026-05-09.3」カードが見える。
