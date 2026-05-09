@@ -11,6 +11,7 @@ import { fetchLatestDisclosureByTicker } from "./lib/disclosureFetcher";
 import { extractPdfText } from "./lib/pdfExtract";
 import { buildMarkdownReport } from "./lib/promptBuilder";
 import { analyzeDisclosureText } from "./lib/ruleAnalyzer";
+import { fetchAiSummary } from "./lib/aiSummarizer";
 import {
   clearHistory,
   deleteHistoryItem,
@@ -21,7 +22,7 @@ import {
   saveSettings
 } from "./lib/storage";
 import type { AnalysisReport, DisclosureFetchResult, DisclosureItem, HistoryItem, LoadingStep } from "./lib/types";
-import { compactText, createId, createInitialSteps, formatDateTime, isValidTicker, normalizePdfUrlInput, normalizeTicker } from "./lib/utils";
+import { compactText, createId, createInitialSteps, formatDateTime, isValidTicker, normalizeTicker } from "./lib/utils";
 
 type LastTickerRequest = {
   ticker: string;
@@ -141,8 +142,31 @@ export default function App() {
         pages: pdf.pages
       });
       setStep(6, "success", "重要語句検出完了");
-      setStep(7, "success", "標準レポート生成完了");
-      setStep(8, "success", "完了");
+
+      if (settings.aiSummaryEnabled && settings.proxyUrl) {
+        setStep(7, "processing", "AI要約を生成中");
+        addLog("Cloudflare Workers AI で要約を生成中...");
+        const aiResult = await fetchAiSummary(
+          settings.proxyUrl,
+          pdf.rawText,
+          disclosure.ticker || sourceFetchResult?.ticker,
+          disclosure.companyName || sourceFetchResult?.companyName,
+          disclosure.title
+        );
+        if (aiResult.ok && aiResult.summary) {
+          nextReport.aiSummary = aiResult.summary;
+          setStep(7, "success", "AI要約生成完了");
+          addLog("AI要約を生成しました");
+        } else {
+          setStep(7, "failed", aiResult.error || "AI要約に失敗しました");
+          addLog(`AI要約に失敗しました: ${aiResult.error || "不明なエラー"}`);
+        }
+      } else {
+        setStep(7, "skipped", settings.aiSummaryEnabled ? "Worker URL未設定" : "AI要約OFF");
+      }
+
+      setStep(8, "success", "標準レポート生成完了");
+      setStep(9, "success", "完了");
       setReport(nextReport);
       saveReportHistory(nextReport, sourceFetchResult, pdf.rawText);
       setDetailReport(false);
@@ -158,7 +182,7 @@ export default function App() {
               ...current,
               status: "manual_required",
               errorMessage: message,
-              userMessage: "PDFの自動取得に失敗しました。Cloudflare Pagesの/api/proxyまたはWorker設定で改善できる場合があります。手動アップロードでも続行できます。"
+              userMessage: "PDFの自動取得に失敗しました。TDnetまたは企業IRページからPDFをダウンロードし、手動アップロードしてください。"
             }
           : {
               status: "manual_required",
@@ -168,7 +192,7 @@ export default function App() {
               source: "manual",
               candidates: [],
               errorMessage: message,
-              userMessage: "PDFの取得またはテキスト抽出に失敗しました。URLの配信元制限が原因の場合は、PDFファイルを手動アップロードしてください。"
+              userMessage: "PDFの取得またはテキスト抽出に失敗しました。別のPDFを手動アップロードしてください。"
             }
       );
       setActive("fetch");
@@ -294,8 +318,7 @@ export default function App() {
   }
 
   async function handleAnalyzeUrl(url: string, ticker?: string, companyName?: string) {
-    const normalizedUrl = normalizePdfUrlInput(url);
-    const disclosure = makeManualDisclosure({ url: normalizedUrl, fileName: "PDF URL貼り付け資料", ticker: ticker ? normalizeTicker(ticker) : undefined, companyName });
+    const disclosure = makeManualDisclosure({ url, fileName: "PDF URL貼り付け資料", ticker: ticker ? normalizeTicker(ticker) : undefined, companyName });
     setActive("fetch");
     setFetchResult({
       status: "success",
@@ -310,7 +333,7 @@ export default function App() {
     setSelectedDisclosure(disclosure);
     setSteps(createInitialSteps().map((step) => (step.id <= 3 ? { ...step, status: "skipped", detail: "PDF URL指定のため省略" } : step)));
     setLogs(["PDF URL貼り付けで分析を開始しました"]);
-    await runPdfAnalysis(normalizedUrl, disclosure);
+    await runPdfAnalysis(url, disclosure);
   }
 
   function retryLastTicker() {
@@ -348,7 +371,7 @@ export default function App() {
     if (active === "report") return { title: detailReport ? "詳細レポート" : "決算分析レポート", sub: report?.companyName ? `${report.ticker || ""} ${report.companyName}` : "標準ルール分析" };
     if (active === "history") return { title: "分析履歴", sub: "保存済みレポート" };
     if (active === "settings") return { title: "設定", sub: "取得・分析オプション" };
-    return { title: "決算短信AIリーダー", sub: "要約強化版 build: 2026-05-09.5" };
+    return { title: "決算短信AIリーダー", sub: "build: 2026-05-10.1" };
   })();
 
   return (

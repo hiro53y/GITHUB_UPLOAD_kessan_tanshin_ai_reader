@@ -23,13 +23,6 @@ export function isValidTicker(value: string): boolean {
   return /^\d{4}$/.test(normalizeTicker(value));
 }
 
-export function normalizePdfUrlInput(value: string): string {
-  let text = value.trim().replace(/^<|>$/g, "").replace(/^["']|["']$/g, "");
-  if (text.startsWith("//")) text = `https:${text}`;
-  if (/^www\./i.test(text)) text = `https://${text}`;
-  return text;
-}
-
 export function formatDateTime(value?: string): string {
   if (!value) return "不明";
   const date = new Date(value);
@@ -93,21 +86,6 @@ function devProxyUrl(url: string): string | undefined {
   }
 }
 
-function isAllowedProxyTarget(url: string): boolean {
-  try {
-    const parsed = new URL(url);
-    if (parsed.hostname === "www.release.tdnet.info" || parsed.hostname === "release.tdnet.info") return true;
-    return parsed.protocol === "https:" && parsed.pathname.toLowerCase().endsWith(".pdf");
-  } catch {
-    return false;
-  }
-}
-
-function pagesProxyUrl(url: string): string | undefined {
-  if (!isAllowedProxyTarget(url)) return undefined;
-  return `/api/proxy?url=${encodeURIComponent(url)}`;
-}
-
 function workerProxyUrl(url: string): string | undefined {
   const proxyUrl = readProxyUrl();
   if (!proxyUrl) return undefined;
@@ -115,14 +93,13 @@ function workerProxyUrl(url: string): string | undefined {
 }
 
 function buildAttempts(url: string): string[] {
-  const normalizedUrl = url.trim();
-  return [devProxyUrl(normalizedUrl), pagesProxyUrl(normalizedUrl), workerProxyUrl(normalizedUrl), normalizedUrl].filter(Boolean) as string[];
+  return [url, workerProxyUrl(url), devProxyUrl(url)].filter(Boolean) as string[];
 }
 
 export async function fetchTextWithFallback(
   url: string,
   initFactory?: () => RequestInit
-): Promise<{ text: string; finalUrl: string; via: "direct" | "worker" | "dev-proxy" | "pages-proxy" }> {
+): Promise<{ text: string; finalUrl: string; via: "direct" | "worker" | "dev-proxy" }> {
   const attempts = buildAttempts(url);
   const errors: string[] = [];
 
@@ -134,20 +111,10 @@ export async function fetchTextWithFallback(
       });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const text = await response.text();
-      if (attemptUrl.startsWith("/api/proxy") && text.includes("<title>決算短信AIリーダー</title>")) {
-        throw new Error("Cloudflare Pages Functions proxyが有効ではありません");
-      }
       return {
         text,
         finalUrl: attemptUrl,
-        via:
-          attemptUrl === url.trim()
-            ? "direct"
-            : attemptUrl.startsWith("/tdnet")
-              ? "dev-proxy"
-              : attemptUrl.startsWith("/api/proxy")
-                ? "pages-proxy"
-                : "worker"
+        via: attemptUrl === url ? "direct" : attemptUrl.startsWith("/tdnet") ? "dev-proxy" : "worker"
       };
     } catch (error) {
       errors.push(`${attemptUrl}: ${error instanceof Error ? error.message : String(error)}`);
@@ -163,17 +130,8 @@ export async function fetchArrayBufferWithFallback(url: string): Promise<ArrayBu
 
   for (const attemptUrl of attempts) {
     try {
-      const response = await fetch(attemptUrl, {
-        cache: "no-store",
-        headers: {
-          Accept: "application/pdf,application/octet-stream,*/*"
-        }
-      });
+      const response = await fetch(attemptUrl, { cache: "force-cache" });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const contentType = response.headers.get("content-type") || "";
-      if (attemptUrl.startsWith("/api/proxy") && /\.pdf(?:$|\?)/i.test(url) && contentType.includes("text/html")) {
-        throw new Error("Cloudflare Pages Functions proxyが有効ではありません");
-      }
       return await response.arrayBuffer();
     } catch (error) {
       errors.push(`${attemptUrl}: ${error instanceof Error ? error.message : String(error)}`);
@@ -191,8 +149,9 @@ export function createInitialSteps(): LoadingStep[] {
     { id: 4, label: "PDF取得", status: "waiting" },
     { id: 5, label: "PDFテキスト抽出", status: "waiting" },
     { id: 6, label: "重要語句検出", status: "waiting" },
-    { id: 7, label: "レポート生成", status: "waiting" },
-    { id: 8, label: "完了", status: "waiting" }
+    { id: 7, label: "AI要約", status: "waiting" },
+    { id: 8, label: "レポート生成", status: "waiting" },
+    { id: 9, label: "完了", status: "waiting" }
   ];
 }
 

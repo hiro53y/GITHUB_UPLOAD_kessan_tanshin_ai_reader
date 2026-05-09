@@ -84,23 +84,6 @@ export type ExtractedNumber = {
   context: string;
 };
 
-export type FreeAiDigest = {
-  verdict: "good" | "mixed" | "weak" | "neutral" | "unknown";
-  verdictLabel: string;
-  headline: string;
-  plainSummary: string;
-  bullets: string[];
-  goodPoints: string[];
-  concernPoints: string[];
-  topicSummaries: Array<{
-    category: TopicCategory | "総合";
-    summary: string;
-    pages: number[];
-  }>;
-  keyFigures: string[];
-  method: string;
-};
-
 export type AnalysisReport = {
   ticker?: string;
   companyName?: string;
@@ -113,8 +96,8 @@ export type AnalysisReport = {
   warnings: WarningItem[];
   sourceCheckpoints: SourceCheckpoint[];
   extractedNumbers: ExtractedNumber[];
-  freeAiDigest: FreeAiDigest;
   aiPrompt: string;
+  aiSummary?: string;
   disclaimer: string;
 };
 
@@ -133,6 +116,7 @@ export type AppSettings = {
   proxyUrl: string;
   showSourceCheckpoints: boolean;
   analysisSensitivity: "low" | "standard" | "high";
+  aiSummaryEnabled: boolean;
 };
 
 export type HistoryItem = {

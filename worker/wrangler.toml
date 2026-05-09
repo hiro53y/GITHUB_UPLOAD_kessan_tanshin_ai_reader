@@ -2,6 +2,9 @@ name = "kessan-tanshin-reader-proxy"
 main = "src/index.ts"
 compatibility_date = "2026-05-09"
 
+[ai]
+binding = "AI"
+
 [vars]
 CACHE_TTL_SECONDS = "300"
 # Optional: comma-separated extra allowed hosts for company IR PDF domains.

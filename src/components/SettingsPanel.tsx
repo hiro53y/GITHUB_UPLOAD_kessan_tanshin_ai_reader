@@ -50,7 +50,7 @@ export function SettingsPanel({
             </button>
           </div>
           <label className="block border-t border-blue-50 pt-4">
-            <span className="mb-2 block font-bold text-slate-800">Cloudflare Workers proxy URL（任意）</span>
+            <span className="mb-2 block font-bold text-slate-800">Cloudflare Workers proxy URL</span>
             <input
               value={settings.proxyUrl}
               onChange={(event) => onChange({ ...settings, proxyUrl: event.target.value })}
@@ -59,7 +59,7 @@ export function SettingsPanel({
             />
           </label>
           <p className="rounded-xl bg-blue-50 p-3 text-sm leading-6 text-slate-600">
-            Cloudflare Pagesで公開した場合は同梱の/api/proxyを自動使用します。別Workerを使う場合だけURLを入力してください。TDnet公開閲覧は掲載期間が限られ、HTML変更で失敗する場合があります。
+            TDnet公開閲覧は掲載期間が限られ、CORSやHTML変更で失敗する場合があります。失敗時は手動PDFアップロードまたはPDF URL貼り付けで続行できます。
           </p>
         </div>
       </Card>
@@ -68,7 +68,7 @@ export function SettingsPanel({
         <div className="space-y-4">
           <div className="flex items-center justify-between border-b border-blue-50 pb-4">
             <span className="font-bold text-slate-800">分析方式</span>
-            <StatusBadge tone="blue">標準ルール分析 + 無料AI要約</StatusBadge>
+            <StatusBadge tone="blue">標準ルール分析</StatusBadge>
           </div>
           <div className="flex items-center justify-between border-b border-blue-50 pb-4">
             <span className="font-bold text-slate-800">重要語句検出感度</span>
@@ -88,24 +88,40 @@ export function SettingsPanel({
             </div>
           </div>
           <div className="flex items-center justify-between border-b border-blue-50 pb-4">
-            <span className="font-bold text-slate-800">根拠ページを表示</span>
+            <span className="font-bold text-slate-800">原文確認ポイントを表示</span>
             <button
               type="button"
               onClick={() => onChange({ ...settings, showSourceCheckpoints: !settings.showSourceCheckpoints })}
               className={`relative h-9 w-16 rounded-full transition ${settings.showSourceCheckpoints ? "bg-brand-600" : "bg-slate-300"}`}
-              aria-label="根拠ページ"
+              aria-label="原文確認ポイント"
             >
               <span className={`absolute top-1 h-7 w-7 rounded-full bg-white transition ${settings.showSourceCheckpoints ? "left-8" : "left-1"}`} />
             </button>
           </div>
           <div className="flex items-center justify-between">
-            <span className="font-bold text-slate-800">外部AI API</span>
-            <StatusBadge tone="gray">使用しない</StatusBadge>
+            <div>
+              <span className="font-bold text-slate-800">AI要約（Workers AI）</span>
+              <div className="text-sm text-slate-500">Cloudflare Workers AI で要約</div>
+            </div>
+            <button
+              type="button"
+              onClick={() => onChange({ ...settings, aiSummaryEnabled: !settings.aiSummaryEnabled })}
+              className={`relative h-9 w-16 rounded-full transition ${settings.aiSummaryEnabled ? "bg-brand-600" : "bg-slate-300"}`}
+              aria-label="AI要約"
+            >
+              <span className={`absolute top-1 h-7 w-7 rounded-full bg-white transition ${settings.aiSummaryEnabled ? "left-8" : "left-1"}`} />
+            </button>
           </div>
-          <div className="flex items-center justify-between">
-            <span className="font-bold text-slate-800">無料AI要約</span>
-            <StatusBadge tone="green">端末内で使用</StatusBadge>
-          </div>
+          {settings.aiSummaryEnabled && !settings.proxyUrl ? (
+            <p className="rounded-xl bg-orange-50 p-3 text-sm leading-6 text-orange-700">
+              AI要約を使うには、上の「Cloudflare Workers proxy URL」にWorker URLを入力してください。Workers AIバインディングを有効にしたWorkerが必要です。
+            </p>
+          ) : null}
+          {settings.aiSummaryEnabled && settings.proxyUrl ? (
+            <p className="rounded-xl bg-green-50 p-3 text-sm leading-6 text-green-700">
+              AI要約が有効です。分析時にCloudflare Workers AI（@cf/meta/llama-3.1-8b-instruct）で要約を生成します。
+            </p>
+          ) : null}
         </div>
       </Card>
 

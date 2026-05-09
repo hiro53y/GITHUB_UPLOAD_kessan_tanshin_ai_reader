@@ -9,7 +9,8 @@ export const defaultSettings: AppSettings = {
   tdnetEnabled: true,
   proxyUrl: "",
   showSourceCheckpoints: true,
-  analysisSensitivity: "standard"
+  analysisSensitivity: "standard",
+  aiSummaryEnabled: false
 };
 
 export function getSettings(): AppSettings {
