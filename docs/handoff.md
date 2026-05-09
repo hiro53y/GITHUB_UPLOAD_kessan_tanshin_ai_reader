@@ -18,6 +18,7 @@ GitHubへアップロードする対象は `deliverables/GITHUB_UPLOAD_kessan_ta
 - GitHubアップロード用フォルダ側でTypeScriptチェックを確認
 - Cloudflare Pages用 `_headers` / `_redirects` と Workers proxy用 `worker/wrangler.toml` を追加
 - 独自ビルドのブラウザ実行時クラッシュ要因だった `process.env.NODE_ENV` / `import.meta.env` の残存を修正
+- Cloudflareクリーン環境向けにビルドスクリプトの未宣言依存を外し、Node.js 20指定の `.node-version` / `.nvmrc` を追加
 
 ## 未完了
 
@@ -32,3 +33,4 @@ GitHubへアップロードする対象は `deliverables/GITHUB_UPLOAD_kessan_ta
 - 外部LLM APIは未実装。APIキー入力欄もない。
 - ブラウザ視覚確認はセキュリティポリシーで拒否されたため、HTTP応答、TDnet proxy、ビルド成果物、実PDF抽出確認に留めた。
 - `deliverables/kessan_tanshin_ai_reader/`、`deliverables/kessan_tanshin_ai_reader_clean/`、`deliverables/UPLOAD_THIS_TO_GITHUB_kessan_tanshin_ai_reader/` は作業途中の旧フォルダ。OneDriveのロックや重複コピーが残ったため、GitHubへはアップロードしない。
+- ローカルでのクリーン `npm ci` はOneDrive配下のEPERMで失敗する場合がある。Cloudflare Pages側ではリポジトリ直下で `npm run build` を実行する。

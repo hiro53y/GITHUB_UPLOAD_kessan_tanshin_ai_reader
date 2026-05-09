@@ -1,12 +1,18 @@
 # 決算短信AIリーダー
 
+## 注意: このフォルダはアップロードしないでください
+
+このフォルダはGit管理ロックと生成済み `dist/` が残った作業用フォルダです。GitHubへアップロードする正しいフォルダは `deliverables/GITHUB_UPLOAD_kessan_tanshin_ai_reader_FIXED/` です。
+
 ## GitHubアップロード対象
 
-GitHubへアップロードするフォルダは `deliverables/GITHUB_UPLOAD_kessan_tanshin_ai_reader/` です。
+GitHubへアップロードするフォルダは `deliverables/GITHUB_UPLOAD_kessan_tanshin_ai_reader_FIXED/` です。
 
 このフォルダをGitHubリポジトリのルートとしてアップロードしてください。Cloudflare Pagesでは、そのリポジトリに対して `npm run build` を実行し、出力先を `dist` に設定します。
 
 アップロード対象フォルダには `src/`、`public/`、`worker/`、`scripts/`、設定ファイル、README、AGENTS、TASKSを含めます。`node_modules/`、`dist/`、`out/`、`.npm-cache/`、`.wrangler/` は含めません。
+
+Cloudflare PagesではNode.js 20系でビルドする前提です。`.node-version` と `.nvmrc` に `20` を入れています。
 
 ## アプリ概要
 

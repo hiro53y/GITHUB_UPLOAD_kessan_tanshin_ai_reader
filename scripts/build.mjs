@@ -1,9 +1,9 @@
+import { existsSync, statSync } from "node:fs";
 import { copyFile, mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import { rollup } from "rollup";
-import { nodeResolve } from "@rollup/plugin-node-resolve";
 import commonjs from "@rollup/plugin-commonjs";
 import json from "@rollup/plugin-json";
 import ts from "typescript";
@@ -94,6 +94,46 @@ function pdfWorkerUrlPlugin() {
   };
 }
 
+function nodeModuleResolverPlugin() {
+  const extensions = ["", ".mjs", ".js", ".jsx", ".ts", ".tsx", ".json"];
+  const isBareModule = (source) =>
+    !source.startsWith(".") &&
+    !source.startsWith("/") &&
+    !source.startsWith("\\") &&
+    !source.startsWith("\0");
+
+  const resolveLocal = (candidate) => {
+    for (const extension of extensions) {
+      const filePath = `${candidate}${extension}`;
+      if (existsSync(filePath) && statSync(filePath).isFile()) return filePath;
+    }
+    if (existsSync(candidate) && statSync(candidate).isDirectory()) {
+      for (const extension of extensions.slice(1)) {
+        const indexPath = path.join(candidate, `index${extension}`);
+        if (existsSync(indexPath) && statSync(indexPath).isFile()) return indexPath;
+      }
+    }
+    return null;
+  };
+
+  return {
+    name: "node-module-resolver",
+    resolveId(source, importer) {
+      if (source.startsWith("\0") || source.endsWith("?url")) return null;
+      if (!isBareModule(source)) {
+        const importerDir = importer && !importer.startsWith("\0") ? path.dirname(importer) : root;
+        return resolveLocal(path.resolve(importerDir, source));
+      }
+      try {
+        const importerDir = importer && !importer.startsWith("\0") ? path.dirname(importer) : root;
+        return require.resolve(source, { paths: [importerDir, root] });
+      } catch {
+        return null;
+      }
+    }
+  };
+}
+
 function productionDefinesPlugin() {
   const replaceDefines = (code) =>
     code
@@ -135,11 +175,7 @@ async function buildJs() {
       cssNullPlugin(),
       pdfWorkerUrlPlugin(),
       tsPlugin(),
-      nodeResolve({
-        browser: true,
-        extensions: [".mjs", ".js", ".json", ".ts", ".tsx"],
-        preferBuiltins: false
-      }),
+      nodeModuleResolverPlugin(),
       commonjs(),
       json()
     ],

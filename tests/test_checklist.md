@@ -20,6 +20,8 @@
 - [x] `deliverables/GITHUB_UPLOAD_kessan_tanshin_ai_reader` に `node_modules/`、`dist/`、`out/`、`github_upload/` が含まれない
 - [x] `deliverables/GITHUB_UPLOAD_kessan_tanshin_ai_reader` に `src/src`、`public/public`、`scripts/scripts`、`worker/worker` の重複コピーが含まれない
 - [x] `node node_modules/typescript/bin/tsc --noEmit -p deliverables/GITHUB_UPLOAD_kessan_tanshin_ai_reader/tsconfig.json` が成功
+- [x] `scripts/build.mjs` の未宣言依存 `@rollup/plugin-node-resolve` をローカルresolverに置換
+- [x] `.node-version` / `.nvmrc` でNode.js 20を指定
 
 ## 未実施
 
@@ -28,6 +30,7 @@
 - [ ] 実PDFアップロードによる手動分析の実機操作確認
 - [ ] Cloudflare Pages本番デプロイ確認
 - [ ] Cloudflare Workers proxy本番デプロイ確認
+- [ ] OneDrive外の完全クリーン環境での `npm ci && npm run build`
 
 ## 補足
 

@@ -10,3 +10,4 @@
 - Cloudflare公開はPages + Workers proxyの2構成にした。理由: フロントエンドは静的PWAとしてPagesに適し、TDnet/PDF取得のCORS回避は許可ドメイン限定のWorkerに分けるのが安全なため。
 - 独自ビルドに `process.env.NODE_ENV` / `import.meta.env` 置換を追加した。理由: Vite CLIを使わないビルドでは置換が自動で行われず、ブラウザ実行時にクラッシュする可能性があったため。
 - GitHubアップロード対象は `deliverables/GITHUB_UPLOAD_kessan_tanshin_ai_reader/` の1フォルダにした。理由: ユーザー要件として、`deliverables/` 直下の1フォルダをGitHubへアップロードすればCloudflare Pagesで使える形が求められたため。`node_modules/`、`dist/`、`out/` は含めない。
+- ビルドスクリプトから `@rollup/plugin-node-resolve` への直接importを外し、Node標準の `require.resolve` を使う軽量resolverへ置き換えた。あわせて `.node-version` / `.nvmrc` でNode.js 20系を指定した。理由: 推移依存だけに頼る直接importはCloudflareのクリーン環境で解決できない可能性があったため。

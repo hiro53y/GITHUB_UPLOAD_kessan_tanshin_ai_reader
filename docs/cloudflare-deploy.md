@@ -17,6 +17,9 @@
 | Build command | `npm run build` |
 | Build output directory | `dist` |
 | Root directory | リポジトリ直下 |
+| Node.js version | `20` |
+
+`.node-version` と `.nvmrc` をリポジトリ直下に置いているため、Cloudflare PagesはNode.js 20系でビルドする前提です。
 
 ## Worker proxy
 
