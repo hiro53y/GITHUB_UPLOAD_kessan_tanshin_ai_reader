@@ -11,7 +11,6 @@ import { fetchLatestDisclosureByTicker } from "./lib/disclosureFetcher";
 import { extractPdfText } from "./lib/pdfExtract";
 import { buildMarkdownReport } from "./lib/promptBuilder";
 import { analyzeDisclosureText } from "./lib/ruleAnalyzer";
-import { fetchAiSummary } from "./lib/aiSummarizer";
 import {
   clearHistory,
   deleteHistoryItem,
@@ -21,8 +20,26 @@ import {
   saveHistoryItem,
   saveSettings
 } from "./lib/storage";
-import type { AnalysisReport, DisclosureFetchResult, DisclosureItem, HistoryItem, LoadingStep } from "./lib/types";
+import type { AnalysisReport, DisclosureFetchResult, DisclosureItem, FreeAiDigest, HistoryItem, LoadingStep } from "./lib/types";
 import { compactText, createId, createInitialSteps, formatDateTime, isValidTicker, normalizeTicker } from "./lib/utils";
+
+const defaultFreeAiDigest: FreeAiDigest = {
+  verdict: "unknown",
+  verdictLabel: "判定不明（旧データ）",
+  headline: "",
+  plainSummary: "",
+  bullets: [],
+  goodPoints: [],
+  concernPoints: [],
+  topicSummaries: [],
+  keyFigures: [],
+  method: "（旧バージョンのデータ）",
+};
+
+function migrateReport(report: AnalysisReport): AnalysisReport {
+  if (report.freeAiDigest) return report;
+  return { ...report, freeAiDigest: defaultFreeAiDigest };
+}
 
 type LastTickerRequest = {
   ticker: string;
@@ -142,31 +159,8 @@ export default function App() {
         pages: pdf.pages
       });
       setStep(6, "success", "重要語句検出完了");
-
-      if (settings.aiSummaryEnabled && settings.proxyUrl) {
-        setStep(7, "processing", "AI要約を生成中");
-        addLog("Cloudflare Workers AI で要約を生成中...");
-        const aiResult = await fetchAiSummary(
-          settings.proxyUrl,
-          pdf.rawText,
-          disclosure.ticker || sourceFetchResult?.ticker,
-          disclosure.companyName || sourceFetchResult?.companyName,
-          disclosure.title
-        );
-        if (aiResult.ok && aiResult.summary) {
-          nextReport.aiSummary = aiResult.summary;
-          setStep(7, "success", "AI要約生成完了");
-          addLog("AI要約を生成しました");
-        } else {
-          setStep(7, "failed", aiResult.error || "AI要約に失敗しました");
-          addLog(`AI要約に失敗しました: ${aiResult.error || "不明なエラー"}`);
-        }
-      } else {
-        setStep(7, "skipped", settings.aiSummaryEnabled ? "Worker URL未設定" : "AI要約OFF");
-      }
-
-      setStep(8, "success", "標準レポート生成完了");
-      setStep(9, "success", "完了");
+      setStep(7, "success", "標準レポート生成完了");
+      setStep(8, "success", "完了");
       setReport(nextReport);
       saveReportHistory(nextReport, sourceFetchResult, pdf.rawText);
       setDetailReport(false);
@@ -346,7 +340,7 @@ export default function App() {
 
   function openHistoryItem(item: HistoryItem) {
     if (item.report) {
-      setReport(item.report);
+      setReport(migrateReport(item.report));
       setFetchResult(item.fetchResult);
       setSelectedDisclosure(item.report.sourceDisclosure);
       setDetailReport(false);
@@ -371,7 +365,7 @@ export default function App() {
     if (active === "report") return { title: detailReport ? "詳細レポート" : "決算分析レポート", sub: report?.companyName ? `${report.ticker || ""} ${report.companyName}` : "標準ルール分析" };
     if (active === "history") return { title: "分析履歴", sub: "保存済みレポート" };
     if (active === "settings") return { title: "設定", sub: "取得・分析オプション" };
-    return { title: "決算短信AIリーダー", sub: "build: 2026-05-10.1" };
+    return { title: "決算短信AIリーダー", sub: "build: 2026-05-09.1" };
   })();
 
   return (
