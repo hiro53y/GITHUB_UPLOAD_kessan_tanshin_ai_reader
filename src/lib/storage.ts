@@ -95,4 +95,19 @@ export function estimateStorageSize(): string {
 
 export function getDisclosureCache(key: string, ttlMs = 10 * 60 * 1000): DisclosureFetchResult | undefined {
   try {
-    const raw = localStorage.getItem(`$
+    const raw = localStorage.getItem(`${DISCLOSURE_CACHE_PREFIX}${key}`);
+    if (!raw) return undefined;
+    const parsed = JSON.parse(raw) as { storedAt: number; value: DisclosureFetchResult };
+    if (Date.now() - parsed.storedAt > ttlMs) return undefined;
+    return {
+      ...parsed.value,
+      userMessage: `${parsed.value.userMessage}（短時間の再取得を避けるため、保存済み結果を表示しています）`
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+export function setDisclosureCache(key: string, value: DisclosureFetchResult): void {
+  localStorage.setItem(`${DISCLOSURE_CACHE_PREFIX}${key}`, JSON.stringify({ storedAt: Date.now(), value }));
+}

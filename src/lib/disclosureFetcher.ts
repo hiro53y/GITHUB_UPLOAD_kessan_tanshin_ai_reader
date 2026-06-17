@@ -229,13 +229,16 @@ export async function fetchLatestDisclosureByTicker(input: {
   ticker: string;
   companyName?: string;
   lookbackDays: number;
+  forceRefresh?: boolean;
 }): Promise<DisclosureFetchResult> {
   const ticker = normalizeTicker(input.ticker);
   const searchedAt = new Date().toISOString();
   const settings = getSettings();
   const cacheKey = `${ticker}:${input.lookbackDays}:${input.companyName || ""}:${settings.proxyUrl || "direct"}`;
-  const cached = getDisclosureCache(cacheKey);
-  if (cached) return cached;
+  if (!input.forceRefresh) {
+    const cached = getDisclosureCache(cacheKey);
+    if (cached) return cached;
+  }
 
   if (!settings.tdnetEnabled) {
     return {

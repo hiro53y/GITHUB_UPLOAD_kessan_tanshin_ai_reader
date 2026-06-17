@@ -285,6 +285,9 @@ export function ReportPage({
           AI用プロンプトをコピー
         </OutlineButton>
       </div>
+      <p className="px-1 text-xs leading-5 text-slate-500">
+        ※ 「AI用プロンプト」は ChatGPT / Claude / Gemini など外部AIに貼り付けて、より詳細な読み解きを依頼する用途のテキストです。
+      </p>
 
       {/* ── ⑩ 免責（小さく） ── */}
       <p className="px-1 text-xs leading-5 text-slate-500">{report.disclaimer}</p>

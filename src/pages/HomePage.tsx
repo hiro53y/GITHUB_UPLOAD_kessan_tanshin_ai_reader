@@ -11,7 +11,8 @@ export function HomePage({
   onAnalyzeFile,
   onAnalyzeUrl,
   onOpenReport,
-  onOpenHistory
+  onOpenHistory,
+  onCopy
 }: {
   latestHistory?: HistoryItem;
   onAnalyzeTicker: (ticker: string, companyName?: string) => void;
@@ -19,6 +20,7 @@ export function HomePage({
   onAnalyzeUrl: (url: string, ticker?: string, companyName?: string) => void;
   onOpenReport: () => void;
   onOpenHistory: () => void;
+  onCopy: (label: string, text: string) => void;
 }) {
   const lastTicker = getLastTicker();
   const [ticker, setTicker] = useState(lastTicker?.ticker ?? "");
@@ -163,5 +165,12 @@ export function HomePage({
             <BarChart3 className="h-5 w-5" />
             レポートを見る
           </OutlineButton>
-          <OutlineButton onClick={() => navigator.clipboard?.writeText("決算短信AIリーダー: 標準ルール分析で決算資料を読む補助PWA")}>
-            <ClipboardCopy classN
+          <OutlineButton onClick={() => onCopy("アプリ説明", "決算短信AIリーダー: 標準ルール分析で決算資料を読む補助PWA")}>
+            <ClipboardCopy className="h-5 w-5" />
+            アプリ説明をコピー
+          </OutlineButton>
+        </div>
+      </Card>
+    </div>
+  );
+}

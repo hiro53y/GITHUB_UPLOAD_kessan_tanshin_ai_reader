@@ -70,34 +70,6 @@ export function SettingsPanel({
             <span className="font-bold text-slate-800">分析方式</span>
             <StatusBadge tone="blue">標準ルール分析</StatusBadge>
           </div>
-          <div className="flex items-center justify-between border-b border-blue-50 pb-4">
-            <span className="font-bold text-slate-800">重要語句検出感度</span>
-            <div className="grid grid-cols-3 overflow-hidden rounded-xl border border-blue-100 text-sm font-bold">
-              {(["low", "standard", "high"] as const).map((value) => (
-                <button
-                  key={value}
-                  type="button"
-                  onClick={() => onChange({ ...settings, analysisSensitivity: value })}
-                  className={`px-4 py-2 ${
-                    settings.analysisSensitivity === value ? "bg-brand-600 text-white" : "bg-white text-slate-600"
-                  }`}
-                >
-                  {value === "low" ? "低" : value === "standard" ? "標準" : "高"}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="flex items-center justify-between border-b border-blue-50 pb-4">
-            <span className="font-bold text-slate-800">原文確認ポイントを表示</span>
-            <button
-              type="button"
-              onClick={() => onChange({ ...settings, showSourceCheckpoints: !settings.showSourceCheckpoints })}
-              className={`relative h-9 w-16 rounded-full transition ${settings.showSourceCheckpoints ? "bg-brand-600" : "bg-slate-300"}`}
-              aria-label="原文確認ポイント"
-            >
-              <span className={`absolute top-1 h-7 w-7 rounded-full bg-white transition ${settings.showSourceCheckpoints ? "left-8" : "left-1"}`} />
-            </button>
-          </div>
           <div className="flex items-center justify-between">
             <div>
               <span className="font-bold text-slate-800">AI要約（Workers AI）</span>

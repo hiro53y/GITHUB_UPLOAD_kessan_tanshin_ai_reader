@@ -23,7 +23,7 @@ import {
   saveSettings
 } from "./lib/storage";
 import type { AnalysisReport, DisclosureFetchResult, DisclosureItem, FreeAiDigest, HistoryItem, LoadingStep } from "./lib/types";
-import { compactText, createId, createInitialSteps, formatDateTime, isValidTicker, normalizeTicker } from "./lib/utils";
+import { compactText, copyToClipboard, createId, createInitialSteps, formatDateTime, isValidTicker, normalizeTicker } from "./lib/utils";
 
 const defaultFreeAiDigest: FreeAiDigest = {
   verdict: "unknown",
@@ -107,18 +107,8 @@ export default function App() {
   }
 
   async function copyText(label: string, text: string) {
-    try {
-      await navigator.clipboard.writeText(text);
-      notify(`${label}をコピーしました`);
-    } catch {
-      const textarea = document.createElement("textarea");
-      textarea.value = text;
-      document.body.appendChild(textarea);
-      textarea.select();
-      document.execCommand("copy");
-      textarea.remove();
-      notify(`${label}をコピーしました`);
-    }
+    const ok = await copyToClipboard(text);
+    notify(ok ? `${label}をコピーしました` : `${label}のコピーに失敗しました`);
   }
 
   function saveReportHistory(nextReport: AnalysisReport, nextFetchResult: DisclosureFetchResult | undefined, textSample: string) {
@@ -224,7 +214,7 @@ export default function App() {
     }
   }
 
-  async function handleAnalyzeTicker(tickerInput: string, companyName?: string) {
+  async function handleAnalyzeTicker(tickerInput: string, companyName?: string, forceRefresh = false) {
     const ticker = normalizeTicker(tickerInput);
     setActive("fetch");
     setDetailReport(false);
@@ -234,7 +224,7 @@ export default function App() {
     setReport(undefined);
     setPdfWarnings([]);
     setSteps(createInitialSteps());
-    setLogs([]);
+    setLogs(forceRefresh ? ["キャッシュを無視して再取得します"] : []);
     setLastTickerRequest({ ticker, companyName });
     if (isValidTicker(ticker)) saveLastTicker({ ticker, companyName });
 
@@ -257,7 +247,7 @@ export default function App() {
       setStep(1, "success", ticker);
       setStep(2, "processing", "TDnet公開検索を実行中");
       addLog("TDnet公開ページ検索を開始しました");
-      const result = await fetchLatestDisclosureByTicker({ ticker, companyName, lookbackDays: settings.lookbackDays });
+      const result = await fetchLatestDisclosureByTicker({ ticker, companyName, lookbackDays: settings.lookbackDays, forceRefresh });
       setFetchResult(result);
 
       if (result.status !== "success" || !result.selectedDisclosure) {
@@ -359,12 +349,12 @@ export default function App() {
     await runPdfAnalysis(url, disclosure);
   }
 
-  function retryLastTicker() {
+  function retryLastTicker(forceRefresh = false) {
     if (!lastTickerRequest) {
       notify("再取得する銘柄コードがありません");
       return;
     }
-    void handleAnalyzeTicker(lastTickerRequest.ticker, lastTickerRequest.companyName);
+    void handleAnalyzeTicker(lastTickerRequest.ticker, lastTickerRequest.companyName, forceRefresh);
   }
 
   function openHistoryItem(item: HistoryItem) {
@@ -417,6 +407,7 @@ export default function App() {
             onAnalyzeUrl={(url, ticker, companyName) => void handleAnalyzeUrl(url, ticker, companyName)}
             onOpenReport={() => setActive("report")}
             onOpenHistory={() => setActive("history")}
+            onCopy={(label, text) => void copyText(label, text)}
           />
         ) : null}
 
@@ -429,7 +420,7 @@ export default function App() {
             isProcessing={processing}
             onSelectDisclosure={setSelectedDisclosure}
             onAnalyzeDisclosure={(item) => void handleAnalyzeDisclosure(item)}
-            onRetry={retryLastTicker}
+            onRetry={(forceRefresh) => retryLastTicker(forceRefresh)}
             onAnalyzeFile={(file) => void handleAnalyzeFile(file, selectedDisclosure?.ticker || fetchResult?.ticker, selectedDisclosure?.companyName || fetchResult?.companyName)}
             onAnalyzeUrl={(url) => void handleAnalyzeUrl(url, selectedDisclosure?.ticker || fetchResult?.ticker, selectedDisclosure?.companyName || fetchResult?.companyName)}
           />
@@ -455,7 +446,31 @@ export default function App() {
             onOpen={openHistoryItem}
             onDelete={removeHistoryItem}
             onClear={removeAllHistory}
+            onCopy={(label, text) => void copyText(label, text)}
           />
         ) : null}
 
-        {active ===
+        {active === "settings" ? (
+          <SettingsPage settings={settings} onChange={persistSettings} historyCount={history.length} storageSize={storageSize} onClearHistory={removeAllHistory} />
+        ) : null}
+
+        {!report && active === "report" ? (
+          <Card>
+            <div className="flex items-center gap-3 text-slate-600">
+              <FileText className="h-6 w-6" />
+              <span>分析後にレポートが表示されます。</span>
+            </div>
+          </Card>
+        ) : null}
+      </main>
+
+      {toast ? (
+        <div className="fixed inset-x-4 bottom-24 z-40 mx-auto max-w-xl rounded-xl bg-slate-950 px-4 py-3 text-center text-sm font-bold text-white shadow-lg">
+          {toast}
+        </div>
+      ) : null}
+
+      <BottomNav active={active} onChange={setActive} />
+    </div>
+  );
+}

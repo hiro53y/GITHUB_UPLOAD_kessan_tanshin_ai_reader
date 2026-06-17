@@ -1,4 +1,5 @@
-import { ChevronRight, Download, Trash2 } from "lucide-react";
+import { ChevronRight, Download, Search, Trash2 } from "lucide-react";
+import { useMemo, useState } from "react";
 import { Card, DangerButton, OutlineButton, StatusBadge } from "../components/Card";
 import type { HistoryItem } from "../lib/types";
 import { formatDateTime } from "../lib/utils";
@@ -9,7 +10,8 @@ export function HistoryPage({
   onFilterChange,
   onOpen,
   onDelete,
-  onClear
+  onClear,
+  onCopy
 }: {
   history: HistoryItem[];
   filter: "all" | "success" | "warning";
@@ -17,15 +19,34 @@ export function HistoryPage({
   onOpen: (item: HistoryItem) => void;
   onDelete: (id: string) => void;
   onClear: () => void;
+  onCopy: (label: string, text: string) => void;
 }) {
-  const filtered = history.filter((item) => {
-    if (filter === "success") return item.status === "success";
-    if (filter === "warning") return item.warningCount > 0 || item.status === "failed";
-    return true;
-  });
+  const [query, setQuery] = useState("");
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return history.filter((item) => {
+      if (filter === "success" && item.status !== "success") return false;
+      if (filter === "warning" && !(item.warningCount > 0 || item.status === "failed")) return false;
+      if (q) {
+        const haystack = `${item.ticker ?? ""} ${item.companyName ?? ""} ${item.title ?? ""} ${item.oneLineSummary ?? ""}`.toLowerCase();
+        if (!haystack.includes(q)) return false;
+      }
+      return true;
+    });
+  }, [history, filter, query]);
 
   return (
     <div className="space-y-4">
+      <div className="relative">
+        <Search className="pointer-events-none absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
+        <input
+          type="search"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="銘柄コード・会社名・タイトルで検索"
+          className="h-12 w-full rounded-xl border border-blue-200 bg-white pl-10 pr-4 text-base outline-none focus:border-brand-600"
+        />
+      </div>
       <div className="grid grid-cols-3 gap-3">
         {[
           ["all", "すべて"],
@@ -75,7 +96,7 @@ export function HistoryPage({
 
       <Card title="履歴操作">
         <div className="space-y-3">
-          <OutlineButton onClick={() => navigator.clipboard?.writeText(history.map((item) => item.reportMarkdown).join("\n\n---\n\n"))}>
+          <OutlineButton onClick={() => onCopy("全履歴", history.map((item) => item.reportMarkdown).join("\n\n---\n\n"))}>
             <Download className="h-5 w-5" />
             全履歴をエクスポート
           </OutlineButton>

@@ -141,6 +141,34 @@ export async function fetchArrayBufferWithFallback(url: string): Promise<ArrayBu
   throw new Error(errors.join(" / "));
 }
 
+/**
+ * クリップボードコピー。navigator.clipboard が使えない/拒否された場合は
+ * 隠し textarea + execCommand("copy") にフォールバック。
+ */
+export async function copyToClipboard(text: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    /* fall through */
+  }
+  try {
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    document.body.appendChild(textarea);
+    textarea.select();
+    const ok = document.execCommand("copy");
+    textarea.remove();
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
 export function createInitialSteps(): LoadingStep[] {
   return [
     { id: 1, label: "銘柄コード確認", status: "waiting" },

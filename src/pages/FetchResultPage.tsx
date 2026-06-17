@@ -25,7 +25,7 @@ export function FetchResultPage({
   isProcessing: boolean;
   onSelectDisclosure: (item: DisclosureItem) => void;
   onAnalyzeDisclosure: (item: DisclosureItem) => void;
-  onRetry: () => void;
+  onRetry: (forceRefresh?: boolean) => void;
   onAnalyzeFile: (file: File) => void;
   onAnalyzeUrl: (url: string) => void;
 }) {
@@ -145,10 +145,16 @@ export function FetchResultPage({
                   分析
                 </OutlineButton>
               </div>
-              <OutlineButton onClick={onRetry}>
-                <RotateCcw className="h-5 w-5" />
-                再取得
-              </OutlineButton>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <OutlineButton onClick={() => onRetry(false)}>
+                  <RotateCcw className="h-5 w-5" />
+                  再取得
+                </OutlineButton>
+                <OutlineButton onClick={() => onRetry(true)}>
+                  <RotateCcw className="h-5 w-5" />
+                  キャッシュ無視で再取得
+                </OutlineButton>
+              </div>
               <div className="rounded-xl border border-blue-200 bg-blue-50 p-3">
                 <h3 className="mb-2 font-bold text-slate-950">よくある原因</h3>
                 <ul className="list-disc space-y-1 pl-5 text-sm leading-6 text-slate-700">
