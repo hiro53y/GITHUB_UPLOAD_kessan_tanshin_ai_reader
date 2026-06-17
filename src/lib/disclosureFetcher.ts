@@ -147,12 +147,13 @@ function buildResult(
   };
 }
 
-async function getAvailableDates(): Promise<SearchDate[]> {
+async function getAvailableDates(signal?: AbortSignal): Promise<SearchDate[]> {
   try {
-    const { text } = await fetchTextWithFallback(TDNET_SEARCH_HEAD_URL);
+    const { text } = await fetchTextWithFallback(TDNET_SEARCH_HEAD_URL, undefined, signal);
     const parsed = parseSearchDates(text);
     return parsed.length ? parsed : buildRecentSearchDates();
-  } catch {
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") throw error;
     return buildRecentSearchDates();
   }
 }
@@ -162,7 +163,8 @@ async function searchByKeyword(
   startYmd: string,
   endYmd: string,
   sourceTicker: string,
-  sourceCompanyName?: string
+  sourceCompanyName?: string,
+  signal?: AbortSignal
 ): Promise<DisclosureItem[]> {
   const params = new URLSearchParams({
     t0: startYmd,
@@ -170,13 +172,17 @@ async function searchByKeyword(
     q: keyword,
     m: "0"
   });
-  const { text, finalUrl } = await fetchTextWithFallback(TDNET_SEARCH_URL, () => ({
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded"
-    },
-    body: params.toString()
-  }));
+  const { text, finalUrl } = await fetchTextWithFallback(
+    TDNET_SEARCH_URL,
+    () => ({
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded"
+      },
+      body: params.toString()
+    }),
+    signal
+  );
 
   return parseDisclosureRows(text, finalUrl).filter((item) => {
     const tickerMatch = item.ticker === sourceTicker;
@@ -188,17 +194,20 @@ async function searchByKeyword(
 async function fallbackListSearch(
   dates: SearchDate[],
   ticker: string,
-  maxPages = 40
+  maxPages = 40,
+  signal?: AbortSignal
 ): Promise<{ candidates: DisclosureItem[]; truncated: boolean }> {
   const candidates: DisclosureItem[] = [];
   let pageCount = 0;
 
   for (const date of dates) {
+    if (signal?.aborted) throw new DOMException("中断されました", "AbortError");
     const firstPageUrl = `${TDNET_INBS_URL}I_list_001_${date.value}.html`;
     let text = "";
     try {
-      text = (await fetchTextWithFallback(firstPageUrl)).text;
-    } catch {
+      text = (await fetchTextWithFallback(firstPageUrl, undefined, signal)).text;
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") throw error;
       continue;
     }
     pageCount += 1;
@@ -206,14 +215,18 @@ async function fallbackListSearch(
     const pageLinks = links.length ? links : [`I_list_001_${date.value}.html`];
 
     for (const link of pageLinks) {
+      if (signal?.aborted) throw new DOMException("中断されました", "AbortError");
       if (link !== `I_list_001_${date.value}.html`) {
         if (pageCount >= maxPages) return { candidates, truncated: true };
         pageCount += 1;
       }
       try {
-        const html = link === `I_list_001_${date.value}.html` ? text : (await fetchTextWithFallback(`${TDNET_INBS_URL}${link}`)).text;
+        const html = link === `I_list_001_${date.value}.html`
+          ? text
+          : (await fetchTextWithFallback(`${TDNET_INBS_URL}${link}`, undefined, signal)).text;
         candidates.push(...parseDisclosureRows(html, `${TDNET_INBS_URL}${link}`).filter((item) => item.ticker === ticker));
-      } catch {
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") throw error;
         continue;
       }
     }
@@ -230,6 +243,7 @@ export async function fetchLatestDisclosureByTicker(input: {
   companyName?: string;
   lookbackDays: number;
   forceRefresh?: boolean;
+  signal?: AbortSignal;
 }): Promise<DisclosureFetchResult> {
   const ticker = normalizeTicker(input.ticker);
   const searchedAt = new Date().toISOString();
@@ -253,7 +267,7 @@ export async function fetchLatestDisclosureByTicker(input: {
   }
 
   try {
-    const allDates = await getAvailableDates();
+    const allDates = await getAvailableDates(input.signal);
     const dates = filterDatesByLookback(allDates, input.lookbackDays);
     if (!dates.length) {
       return {
@@ -272,21 +286,23 @@ export async function fetchLatestDisclosureByTicker(input: {
     let note = "";
     let rawCandidates: DisclosureItem[] = [];
     try {
-      rawCandidates = await searchByKeyword(ticker, oldest, newest, ticker, input.companyName);
-    } catch {
+      rawCandidates = await searchByKeyword(ticker, oldest, newest, ticker, input.companyName, input.signal);
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") throw error;
       note = "検索フォーム取得に失敗したため、日別一覧探索へ切り替えました。";
     }
 
     if (!rawCandidates.length && input.companyName) {
       try {
-        rawCandidates = await searchByKeyword(input.companyName, oldest, newest, ticker, input.companyName);
-      } catch {
+        rawCandidates = await searchByKeyword(input.companyName, oldest, newest, ticker, input.companyName, input.signal);
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") throw error;
         note = note || "会社名検索に失敗したため、日別一覧探索へ切り替えました。";
       }
     }
 
     if (!rawCandidates.length) {
-      const fallback = await fallbackListSearch(dates, ticker);
+      const fallback = await fallbackListSearch(dates, ticker, 40, input.signal);
       rawCandidates = fallback.candidates;
       if (fallback.truncated) note = "過剰アクセスを避けるため、一覧ページ探索は途中で停止しました。";
     }

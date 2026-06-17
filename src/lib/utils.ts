@@ -98,15 +98,18 @@ function buildAttempts(url: string): string[] {
 
 export async function fetchTextWithFallback(
   url: string,
-  initFactory?: () => RequestInit
+  initFactory?: () => RequestInit,
+  signal?: AbortSignal
 ): Promise<{ text: string; finalUrl: string; via: "direct" | "worker" | "dev-proxy" }> {
   const attempts = buildAttempts(url);
   const errors: string[] = [];
 
   for (const attemptUrl of attempts) {
+    if (signal?.aborted) throw new DOMException("中断されました", "AbortError");
     try {
       const response = await fetch(attemptUrl, {
         cache: "no-store",
+        signal,
         ...(initFactory ? initFactory() : undefined)
       });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -117,6 +120,7 @@ export async function fetchTextWithFallback(
         via: attemptUrl === url ? "direct" : attemptUrl.startsWith("/tdnet") ? "dev-proxy" : "worker"
       };
     } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") throw error;
       errors.push(`${attemptUrl}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
@@ -124,16 +128,18 @@ export async function fetchTextWithFallback(
   throw new Error(errors.join(" / "));
 }
 
-export async function fetchArrayBufferWithFallback(url: string): Promise<ArrayBuffer> {
+export async function fetchArrayBufferWithFallback(url: string, signal?: AbortSignal): Promise<ArrayBuffer> {
   const attempts = buildAttempts(url);
   const errors: string[] = [];
 
   for (const attemptUrl of attempts) {
+    if (signal?.aborted) throw new DOMException("中断されました", "AbortError");
     try {
-      const response = await fetch(attemptUrl, { cache: "force-cache" });
+      const response = await fetch(attemptUrl, { cache: "force-cache", signal });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       return await response.arrayBuffer();
     } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") throw error;
       errors.push(`${attemptUrl}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }

@@ -63,10 +63,17 @@ export function listHistory(): HistoryItem[] {
   }
 }
 
-export function saveHistoryItem(item: HistoryItem): void {
+export const HISTORY_LIMIT = 50;
+
+/**
+ * 履歴を保存。50件超過で古いものをトリミングした場合は trimmed=true を返す。
+ */
+export function saveHistoryItem(item: HistoryItem): { trimmed: boolean } {
   const current = listHistory();
-  const next = [item, ...current.filter((entry) => entry.id !== item.id)].slice(0, 50);
+  const merged = [item, ...current.filter((entry) => entry.id !== item.id)];
+  const next = merged.slice(0, HISTORY_LIMIT);
   localStorage.setItem(HISTORY_KEY, JSON.stringify(next));
+  return { trimmed: merged.length > HISTORY_LIMIT };
 }
 
 export function deleteHistoryItem(id: string): void {

@@ -5,20 +5,22 @@ import { fetchArrayBufferWithFallback } from "./utils";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = workerSrc;
 
-async function toArrayBuffer(input: File | ArrayBuffer | string): Promise<ArrayBuffer> {
-  if (typeof input === "string") return fetchArrayBufferWithFallback(input);
+async function toArrayBuffer(input: File | ArrayBuffer | string, signal?: AbortSignal): Promise<ArrayBuffer> {
+  if (typeof input === "string") return fetchArrayBufferWithFallback(input, signal);
   if (input instanceof File) return input.arrayBuffer();
   return input;
 }
 
-export async function extractPdfText(input: File | ArrayBuffer | string): Promise<PdfExtractResult> {
-  const buffer = await toArrayBuffer(input);
+export async function extractPdfText(input: File | ArrayBuffer | string, signal?: AbortSignal): Promise<PdfExtractResult> {
+  const buffer = await toArrayBuffer(input, signal);
+  if (signal?.aborted) throw new DOMException("中断されました", "AbortError");
   const loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(buffer) });
   const pdf = await loadingTask.promise;
   const pages: PdfExtractResult["pages"] = [];
   const warnings: string[] = [];
 
   for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+    if (signal?.aborted) throw new DOMException("中断されました", "AbortError");
     try {
       const page = await pdf.getPage(pageNumber);
       const content = await page.getTextContent();

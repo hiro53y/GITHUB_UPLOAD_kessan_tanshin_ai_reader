@@ -1,7 +1,7 @@
-import { AlertTriangle, ExternalLink, FileUp, Info, Link, RotateCcw } from "lucide-react";
+import { AlertTriangle, ExternalLink, FileUp, Info, Link, RotateCcw, XCircle } from "lucide-react";
 import { useRef, useState } from "react";
 import { DisclosureCandidateList } from "../components/DisclosureCandidateList";
-import { Card, OutlineButton, PrimaryButton, StatusBadge } from "../components/Card";
+import { Card, DangerButton, OutlineButton, PrimaryButton, StatusBadge } from "../components/Card";
 import { LoadingSteps } from "../components/LoadingSteps";
 import type { DisclosureFetchResult, DisclosureItem, LoadingStep } from "../lib/types";
 import { formatDateTime } from "../lib/utils";
@@ -15,6 +15,7 @@ export function FetchResultPage({
   onSelectDisclosure,
   onAnalyzeDisclosure,
   onRetry,
+  onCancel,
   onAnalyzeFile,
   onAnalyzeUrl
 }: {
@@ -26,6 +27,7 @@ export function FetchResultPage({
   onSelectDisclosure: (item: DisclosureItem) => void;
   onAnalyzeDisclosure: (item: DisclosureItem) => void;
   onRetry: (forceRefresh?: boolean) => void;
+  onCancel: () => void;
   onAnalyzeFile: (file: File) => void;
   onAnalyzeUrl: (url: string) => void;
 }) {
@@ -36,7 +38,15 @@ export function FetchResultPage({
 
   return (
     <div className="space-y-4">
-      {isProcessing ? <LoadingSteps steps={steps} logs={logs} /> : null}
+      {isProcessing ? (
+        <>
+          <LoadingSteps steps={steps} logs={logs} />
+          <DangerButton onClick={onCancel}>
+            <XCircle className="h-5 w-5" />
+            処理を中断
+          </DangerButton>
+        </>
+      ) : null}
 
       {success && selectedDisclosure ? (
         <>

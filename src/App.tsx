@@ -1,5 +1,5 @@
-import { FileText } from "lucide-react";
-import { useMemo, useState } from "react";
+import { FileText, WifiOff } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { BottomNav, type NavKey } from "./components/BottomNav";
 import { Card } from "./components/Card";
 import { FetchResultPage } from "./pages/FetchResultPage";
@@ -83,6 +83,35 @@ export default function App() {
   const [toast, setToast] = useState("");
   const [detailReport, setDetailReport] = useState(false);
   const [lastTickerRequest, setLastTickerRequest] = useState<LastTickerRequest | undefined>();
+  const [isOnline, setIsOnline] = useState<boolean>(typeof navigator === "undefined" ? true : navigator.onLine);
+  const abortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+    };
+  }, []);
+
+  function startAbortController(): AbortSignal {
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+    return controller.signal;
+  }
+
+  function cancelProcessing() {
+    if (!abortRef.current) return;
+    abortRef.current.abort();
+    abortRef.current = null;
+    setProcessing(false);
+    setSteps((current) => current.map((step) => (step.status === "processing" ? { ...step, status: "failed", detail: "中断" } : step)));
+    notify("処理を中断しました");
+  }
 
   const latestHistory = history[0];
   const storageSize = useMemo(() => estimateStorageSize(), [history, settings]);
@@ -129,17 +158,21 @@ export default function App() {
       report: nextReport,
       fetchResult: nextFetchResult
     };
-    saveHistoryItem(item);
+    const result = saveHistoryItem(item);
     setHistory(listHistory());
+    if (result.trimmed) {
+      notify("履歴が上限の50件を超えたため、最古のものを削除しました");
+    }
   }
 
-  async function runPdfAnalysis(input: File | string, disclosure: DisclosureItem, sourceFetchResult?: DisclosureFetchResult) {
+  async function runPdfAnalysis(input: File | string, disclosure: DisclosureItem, sourceFetchResult?: DisclosureFetchResult, signal?: AbortSignal) {
+    const effectiveSignal = signal ?? startAbortController();
     try {
       setProcessing(true);
       setStep(4, input instanceof File ? "success" : "processing", input instanceof File ? "手動PDFを使用" : "PDFを取得中");
       if (!(input instanceof File)) addLog("PDF URLからPDF取得を開始しました");
 
-      const pdf = await extractPdfText(input);
+      const pdf = await extractPdfText(input, effectiveSignal);
       setPdfWarnings(pdf.warnings);
       setStep(4, "success", input instanceof File ? "手動PDFを使用" : "PDF取得完了");
       setStep(5, "success", `${pdf.totalPages}ページ / 抽出 ${pdf.rawText.length.toLocaleString("ja-JP")}文字`);
@@ -185,6 +218,9 @@ export default function App() {
       setActive("report");
       notify("分析レポートを生成しました");
     } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        return;
+      }
       const message = error instanceof Error ? error.message : String(error);
       setStep(4, "failed", "PDF取得または解析に失敗");
       setStep(5, "failed", "テキスト抽出未完了");
@@ -215,6 +251,10 @@ export default function App() {
   }
 
   async function handleAnalyzeTicker(tickerInput: string, companyName?: string, forceRefresh = false) {
+    if (!isOnline) {
+      notify("オフラインのため自動取得できません。手動PDFアップロードを使ってください。");
+      return;
+    }
     const ticker = normalizeTicker(tickerInput);
     setActive("fetch");
     setDetailReport(false);
@@ -227,6 +267,7 @@ export default function App() {
     setLogs(forceRefresh ? ["キャッシュを無視して再取得します"] : []);
     setLastTickerRequest({ ticker, companyName });
     if (isValidTicker(ticker)) saveLastTicker({ ticker, companyName });
+    const tickerSignal = startAbortController();
 
     if (!isValidTicker(ticker)) {
       setStep(1, "failed", "4桁の銘柄コードを入力してください");
@@ -247,7 +288,7 @@ export default function App() {
       setStep(1, "success", ticker);
       setStep(2, "processing", "TDnet公開検索を実行中");
       addLog("TDnet公開ページ検索を開始しました");
-      const result = await fetchLatestDisclosureByTicker({ ticker, companyName, lookbackDays: settings.lookbackDays, forceRefresh });
+      const result = await fetchLatestDisclosureByTicker({ ticker, companyName, lookbackDays: settings.lookbackDays, forceRefresh, signal: tickerSignal });
       setFetchResult(result);
 
       if (result.status !== "success" || !result.selectedDisclosure) {
@@ -276,8 +317,11 @@ export default function App() {
         return;
       }
 
-      await runPdfAnalysis(selected.pdfUrl, selected, result);
+      await runPdfAnalysis(selected.pdfUrl, selected, result, tickerSignal);
     } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        return;
+      }
       const message = error instanceof Error ? error.message : String(error);
       setStep(2, "failed", "ネットワークエラー");
       setStep(3, "failed", "候補抽出未完了");
@@ -308,7 +352,8 @@ export default function App() {
       notify("PDF URLがないため手動PDFを使ってください");
       return;
     }
-    await runPdfAnalysis(disclosure.pdfUrl, disclosure, fetchResult);
+    const signal = startAbortController();
+    await runPdfAnalysis(disclosure.pdfUrl, disclosure, fetchResult, signal);
   }
 
   async function handleAnalyzeFile(file: File, ticker?: string, companyName?: string) {
@@ -327,10 +372,15 @@ export default function App() {
     setSelectedDisclosure(disclosure);
     setSteps(createInitialSteps().map((step) => (step.id <= 3 ? { ...step, status: "skipped", detail: "手動PDFのため省略" } : step)));
     setLogs(["手動PDFアップロードで分析を開始しました"]);
-    await runPdfAnalysis(file, disclosure);
+    const signal = startAbortController();
+    await runPdfAnalysis(file, disclosure, undefined, signal);
   }
 
   async function handleAnalyzeUrl(url: string, ticker?: string, companyName?: string) {
+    if (!isOnline) {
+      notify("オフラインのためURL取得できません。PDFファイルアップロードを使ってください。");
+      return;
+    }
     const disclosure = makeManualDisclosure({ url, fileName: "PDF URL貼り付け資料", ticker: ticker ? normalizeTicker(ticker) : undefined, companyName });
     setActive("fetch");
     setFetchResult({
@@ -346,7 +396,8 @@ export default function App() {
     setSelectedDisclosure(disclosure);
     setSteps(createInitialSteps().map((step) => (step.id <= 3 ? { ...step, status: "skipped", detail: "PDF URL指定のため省略" } : step)));
     setLogs(["PDF URL貼り付けで分析を開始しました"]);
-    await runPdfAnalysis(url, disclosure);
+    const signal = startAbortController();
+    await runPdfAnalysis(url, disclosure, undefined, signal);
   }
 
   function retryLastTicker(forceRefresh = false) {
@@ -398,6 +449,13 @@ export default function App() {
         </div>
       </header>
 
+      {!isOnline ? (
+        <div className="mx-auto flex max-w-xl items-center gap-2 bg-orange-50 px-4 py-3 text-sm font-bold text-orange-700">
+          <WifiOff className="h-5 w-5 shrink-0" />
+          <span>オフラインです。TDnetからの自動取得・PDFダウンロードは使えません。手動PDFアップロードは可能です。</span>
+        </div>
+      ) : null}
+
       <main className="mx-auto max-w-xl px-4 pb-28 pt-4">
         {active === "home" ? (
           <HomePage
@@ -421,6 +479,7 @@ export default function App() {
             onSelectDisclosure={setSelectedDisclosure}
             onAnalyzeDisclosure={(item) => void handleAnalyzeDisclosure(item)}
             onRetry={(forceRefresh) => retryLastTicker(forceRefresh)}
+            onCancel={cancelProcessing}
             onAnalyzeFile={(file) => void handleAnalyzeFile(file, selectedDisclosure?.ticker || fetchResult?.ticker, selectedDisclosure?.companyName || fetchResult?.companyName)}
             onAnalyzeUrl={(url) => void handleAnalyzeUrl(url, selectedDisclosure?.ticker || fetchResult?.ticker, selectedDisclosure?.companyName || fetchResult?.companyName)}
           />
