@@ -63,62 +63,45 @@ ${input.textSample}
 export function buildMarkdownReport(report: AnalysisReport): string {
   const dig = report.freeAiDigest;
 
-  const keyFigures = dig.keyFigures.length
-    ? dig.keyFigures.map((fig) => `- ${fig}`).join("\n")
-    : "- 数値は自動パースできませんでした";
+  const metricsTable = dig.keyMetrics.length
+    ? ["| 項目 | 値 | 前年同期比 |", "|---|---:|---:|", ...dig.keyMetrics.map((r) => `| ${r.label} | ${r.value} | ${r.growth ?? "—"} |`)].join("\n")
+    : "";
 
-  const topics = report.topics
-    .filter((topic) => topic.detected)
-    .map((topic) => `- **${topic.category}**: ${topic.comment}（${topic.pages.join("・")}ページ）`)
-    .join("\n");
+  const forecastTable = dig.forecastMetrics.length
+    ? ["| 通期予想 | 値 | 前期比 |", "|---|---:|---:|", ...dig.forecastMetrics.map((r) => `| ${r.label} | ${r.value} | ${r.growth ?? "—"} |`)].join("\n")
+    : "";
 
-  const warnings = report.warnings
-    .map((warning) => `- ${warning.label}（${warning.level === "high" ? "要注意" : "参考"}）: ${warning.comment} / ${warning.pages.join("・")}ページ`)
-    .join("\n");
+  const otherTopics = dig.topicSummaries.length
+    ? dig.topicSummaries.map((t) => `- **${t.category}**: ${t.summary}${t.pages.length ? `（${t.pages.slice(0, 3).join("・")}P）` : ""}`).join("\n")
+    : "";
 
   const checkpoints = report.sourceCheckpoints
-    .map((checkpoint) => `- ${checkpoint.pageNumber}ページ: ${checkpoint.reason}`)
+    .slice(0, 8)
+    .map((cp) => `- ${cp.pageNumber}P: ${cp.reason}`)
     .join("\n");
 
-  const numbers = report.extractedNumbers
-    .slice(0, 20)
-    .map((item) => `- ${item.label}: ${item.valueText}（${item.pageNumber}ページ）`)
-    .join("\n");
+  const warningsBlock = report.warnings.length
+    ? report.warnings.map((w) => `- ${w.label}（${w.level === "high" ? "要注意" : "参考"}・${w.pages.slice(0, 3).join("・")}P）`).join("\n")
+    : "- 強い注意語句は検出されませんでした";
 
-  return `# 決算分析レポート
+  const goodBlock = dig.goodPoints.map((p) => `- ${p}`).join("\n");
+  const concernBlock = dig.concernPoints.map((p) => `- ${p}`).join("\n");
+
+  const sections: string[] = [];
+
+  sections.push(`# 決算分析レポート
 
 - 銘柄コード: ${report.ticker || "不明"}
 - 会社名: ${report.companyName || "不明"}
+- 資料: ${report.sourceDisclosure?.title || "手動PDF資料"}
+- 開示日時: ${formatDateTime(report.sourceDisclosure?.disclosedAt)}
 - 分析日時: ${formatDateTime(report.analyzedAt)}
 
-## サマリー
-**判定**: ${dig.verdictLabel}
-${report.oneLineSummary}
+## 結論
+**${dig.verdictLabel}**
 
-## 主要数値
-${keyFigures}
+${report.oneLineSummary}`);
 
-## 無料AI診断
-
-### 良い点
-${dig.goodPoints.map((item) => `- ${item}`).join("\n")}
-
-### 注意点
-${dig.concernPoints.map((item) => `- ${item}`).join("\n")}
-
-## 検出トピック
-${topics || "- 主要トピックは検出されませんでした"}
-
-## 注意語句
-${warnings || "- 強い注意語句は検出されませんでした"}
-
-## 原文確認ページ
-${checkpoints || "- 根拠ページ候補は自動検出されませんでした"}
-
-## 抽出数値候補
-${numbers || "- 数値候補は自動抽出されませんでした"}
-
-## 免責事項
-${report.disclaimer}
-`;
-}
+  if (metricsTable || forecastTable) {
+    const blocks: string[] = ["## 主要数値"];
+    if (metricsTable) blocks.push("### 実績\n" + metricsT

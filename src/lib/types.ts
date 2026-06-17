@@ -86,6 +86,13 @@ export type ExtractedNumber = {
 
 export type FreeAiVerdict = "good" | "weak" | "mixed" | "neutral" | "unknown";
 
+export type KeyMetricRow = {
+  label: string;
+  value: string;
+  growth?: string;
+  growthTone?: "up" | "down" | "flat" | "unknown";
+};
+
 export type FreeAiDigest = {
   verdict: FreeAiVerdict;
   verdictLabel: string;
@@ -96,6 +103,10 @@ export type FreeAiDigest = {
   concernPoints: string[];
   topicSummaries: Array<{ category: string; summary: string; pages: number[] }>;
   keyFigures: string[];
+  keyMetrics: KeyMetricRow[];
+  forecastMetrics: KeyMetricRow[];
+  dividendLine?: string;
+  forecastRevisionLine?: string;
   method: string;
 };
 
@@ -149,10 +160,4 @@ export type HistoryItem = {
   extractedTextSample: string;
   status: "success" | "failed";
   report?: AnalysisReport;
-  fetchResult?: DisclosureFetchResult;
-};
-
-export type AnalysisInputSource =
-  | { kind: "ticker"; ticker: string; companyName?: string }
-  | { kind: "file"; file: File; ticker?: string; companyName?: string }
-  | { kind: "url"; url: string; ticker?: string; companyName?: string };
+  fetchResult?: Disclos

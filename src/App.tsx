@@ -33,6 +33,8 @@ const defaultFreeAiDigest: FreeAiDigest = {
   concernPoints: [],
   topicSummaries: [],
   keyFigures: [],
+  keyMetrics: [],
+  forecastMetrics: [],
   method: "（旧バージョンのデータ）",
 };
 
@@ -457,7 +459,4 @@ export default function App() {
         </div>
       ) : null}
 
-      <BottomNav active={active} onChange={setActive} />
-    </div>
-  );
-}
+      <BottomNav active={active} o

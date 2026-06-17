@@ -4,6 +4,7 @@ import type {
   ExtractedNumber,
   FreeAiDigest,
   FreeAiVerdict,
+  KeyMetricRow,
   SourceCheckpoint,
   TopicAnalysis,
   TopicCategory,
@@ -134,6 +135,10 @@ type FinancialDigestBase = {
   dividendSummary?: string;
   verdict?: FreeAiVerdict;
   keyFigures: string[];
+  keyMetrics: KeyMetricRow[];
+  forecastMetrics: KeyMetricRow[];
+  dividendLine?: string;
+  forecastRevisionLine?: string;
 };
 
 function findKeywordPages(pages: Array<{ pageNumber: number; text: string }>, keywords: string[]): Array<{ pageNumber: number; keyword: string; text: string }> {
@@ -279,8 +284,32 @@ function growthPhrase(value: string): string {
   return "横ばい";
 }
 
+function growthTone(value: string): KeyMetricRow["growthTone"] {
+  const parsed = growthNumber(value);
+  if (typeof parsed !== "number") return "unknown";
+  if (parsed < 0) return "down";
+  if (parsed > 0) return "up";
+  return "flat";
+}
+
+function formatYenAmount(rawValue: string): string {
+  const cleaned = rawValue.replace(/[△▲]/g, "-").replace(/,/g, "").trim();
+  const num = Number(cleaned);
+  if (!Number.isFinite(num)) return `${rawValue}百万円`;
+  const abs = Math.abs(num);
+  if (abs >= 1_000_000) {
+    const oku = num / 100;
+    return `${oku.toLocaleString("ja-JP", { maximumFractionDigits: 0 })}億円`;
+  }
+  if (abs >= 10_000) {
+    const oku = num / 100;
+    return `${oku.toLocaleString("ja-JP", { maximumFractionDigits: 1 })}億円`;
+  }
+  return `${num.toLocaleString("ja-JP")}百万円`;
+}
+
 function metricWithGrowth(label: string, value: string, growth: string): string {
-  return `${label}${value}百万円（${growthPhrase(growth)}）`;
+  return `${label}${formatYenAmount(value)}（${growthPhrase(growth)}）`;
 }
 
 function parseFinancialDigest(rawText: string): FinancialDigestBase {
@@ -347,14 +376,43 @@ function parseFinancialDigest(rawText: string): FinancialDigestBase {
     : undefined;
 
   const keyFigures = [
-    performance ? `売上高: ${performance.sales}百万円（${growthPhrase(performance.salesGrowth)}）` : undefined,
-    performance ? `営業利益: ${performance.operatingProfit}百万円（${growthPhrase(performance.operatingProfitGrowth)}）` : undefined,
-    performance ? `経常利益: ${performance.ordinaryProfit}百万円（${growthPhrase(performance.ordinaryProfitGrowth)}）` : undefined,
-    performance ? `純利益: ${performance.netProfit}百万円（${growthPhrase(performance.netProfitGrowth)}）` : undefined,
-    forecast ? `通期予想売上高: ${forecast.sales}百万円（${growthPhrase(forecast.salesGrowth)}）` : undefined,
-    forecast ? `通期予想営業利益: ${forecast.operatingProfit}百万円（${growthPhrase(forecast.operatingProfitGrowth)}）` : undefined,
+    performance ? `売上高: ${formatYenAmount(performance.sales)}（${growthPhrase(performance.salesGrowth)}）` : undefined,
+    performance ? `営業利益: ${formatYenAmount(performance.operatingProfit)}（${growthPhrase(performance.operatingProfitGrowth)}）` : undefined,
+    performance ? `経常利益: ${formatYenAmount(performance.ordinaryProfit)}（${growthPhrase(performance.ordinaryProfitGrowth)}）` : undefined,
+    performance ? `純利益: ${formatYenAmount(performance.netProfit)}（${growthPhrase(performance.netProfitGrowth)}）` : undefined,
+    forecast ? `通期予想売上高: ${formatYenAmount(forecast.sales)}（${growthPhrase(forecast.salesGrowth)}）` : undefined,
+    forecast ? `通期予想営業利益: ${formatYenAmount(forecast.operatingProfit)}（${growthPhrase(forecast.operatingProfitGrowth)}）` : undefined,
     dividend ? `配当予想: ${dividend}` : undefined
   ].filter(Boolean) as string[];
+
+  const keyMetrics: KeyMetricRow[] = performance
+    ? [
+        { label: "売上高", value: formatYenAmount(performance.sales), growth: growthPhrase(performance.salesGrowth), growthTone: growthTone(performance.salesGrowth) },
+        { label: "営業利益", value: formatYenAmount(performance.operatingProfit), growth: growthPhrase(performance.operatingProfitGrowth), growthTone: growthTone(performance.operatingProfitGrowth) },
+        { label: "経常利益", value: formatYenAmount(performance.ordinaryProfit), growth: growthPhrase(performance.ordinaryProfitGrowth), growthTone: growthTone(performance.ordinaryProfitGrowth) },
+        { label: "純利益", value: formatYenAmount(performance.netProfit), growth: growthPhrase(performance.netProfitGrowth), growthTone: growthTone(performance.netProfitGrowth) }
+      ]
+    : [];
+
+  const forecastMetrics: KeyMetricRow[] = forecast
+    ? [
+        { label: "売上高", value: formatYenAmount(forecast.sales), growth: growthPhrase(forecast.salesGrowth), growthTone: growthTone(forecast.salesGrowth) },
+        { label: "営業利益", value: formatYenAmount(forecast.operatingProfit), growth: growthPhrase(forecast.operatingProfitGrowth), growthTone: growthTone(forecast.operatingProfitGrowth) },
+        { label: "経常利益", value: formatYenAmount(forecast.ordinaryProfit), growth: growthPhrase(forecast.ordinaryProfitGrowth), growthTone: growthTone(forecast.ordinaryProfitGrowth) },
+        { label: "純利益", value: formatYenAmount(forecast.netProfit), growth: growthPhrase(forecast.netProfitGrowth), growthTone: growthTone(forecast.netProfitGrowth) }
+      ]
+    : [];
+
+  const dividendLine = dividend
+    ? `配当予想 ${dividend}${dividendRevision === "有" ? "（直近予想から修正あり）" : dividendRevision === "無" ? "（修正なし）" : ""}`
+    : undefined;
+
+  const forecastRevisionLine =
+    forecastRevision === "有"
+      ? "通期業績予想は直近予想から修正あり"
+      : forecastRevision === "無"
+        ? "通期業績予想の修正なし"
+        : undefined;
 
   return {
     performance,
@@ -366,7 +424,11 @@ function parseFinancialDigest(rawText: string): FinancialDigestBase {
     forecastSummary,
     dividendSummary,
     verdict,
-    keyFigures
+    keyFigures,
+    keyMetrics,
+    forecastMetrics,
+    dividendLine,
+    forecastRevisionLine
   };
 }
 
@@ -409,34 +471,19 @@ function decideConfidence(rawTextLength: number, detectedTopics: number): Analys
 }
 
 function buildSummary(topics: TopicAnalysis[], warnings: WarningItem[], financialDigest: FinancialDigestBase): string {
-  const warningLabels = warnings.map((w) => w.label).slice(0, 3);
-  const warningText = warningLabels.length ? `注意語句: ${warningLabels.join("・")}。` : "強い注意語句は目立ちません。";
-
-  // 数値パースできた場合は構造化サマリーを使用
-  if (financialDigest.performanceSummary) {
-    const parts = [
-      verdictLabel(financialDigest.verdict || "unknown") + "。",
-      financialDigest.performanceSummary,
-      financialDigest.forecastSummary,
-      financialDigest.dividendSummary,
-      warningText
-    ].filter(Boolean);
-    return compactText(parts.join(" "), 300);
+  // 数値パース成功時：判定 + 業績一行のみ（短く）
+  if (financialDigest.performance) {
+    const p = financialDigest.performance;
+    const judgement = verdictLabel(financialDigest.verdict || "unknown");
+    return `${judgement}。${p.period}は売上${growthPhrase(p.salesGrowth)}・営業利益${growthPhrase(p.operatingProfitGrowth)}・純利益${growthPhrase(p.netProfitGrowth)}。`;
   }
 
-  // 数値パース不可の場合はキーワードリストで簡潔に
+  // 数値パース不可の場合
   const rawText = topics.flatMap((t) => t.excerpts).join(" ");
   const verdict = verdictLabel(classifyVerdict(rawText, financialDigest));
-  const detectedTopics = topics.filter((t) => t.detected);
-  const positiveKws = unique(detectedTopics.flatMap((t) => t.keywords.filter((kw) => positiveWords.includes(kw)))).slice(0, 4);
-  const negativeKws = unique(detectedTopics.flatMap((t) => t.keywords.filter((kw) => negativeWords.includes(kw)))).slice(0, 3);
-  const allKws = unique([...positiveKws, ...negativeKws]);
-  const kwText = allKws.length
-    ? `主要語句: ${allKws.join("・")}。`
-    : detectedTopics.length
-      ? `検出項目: ${detectedTopics.map((t) => t.category).slice(0, 5).join("・")}。`
-      : "主要キーワードの検出が少なく、PDFの文字埋め込み状態に依存します。";
-  return `${verdict}。${kwText}${warningText}`;
+  const warningLabels = warnings.slice(0, 2).map((w) => w.label);
+  const tail = warningLabels.length ? ` 注意: ${warningLabels.join("・")}。` : "";
+  return `${verdict}。${tail}`.trim();
 }
 
 function buildFreeAiDigest(
@@ -457,136 +504,70 @@ function buildFreeAiDigest(
     .map((item) => `${item.label}: ${item.valueText}（${item.pageNumber}P）`);
   const keyFigures = financialDigest.keyFigures.length ? financialDigest.keyFigures : extractedKeyFigures;
 
-  // ヘッドライン：判定 + パース済みサマリーか主要キーワード
-  const detectedPositiveKws = unique(detectedTopics.flatMap((t) => t.keywords.filter((kw) => positiveWords.includes(kw)))).slice(0, 3);
-  const headline = financialDigest.performanceSummary
-    ? `${label}。${financialDigest.performanceSummary}`
-    : detectedPositiveKws.length
-      ? `${label}。${detectedPositiveKws.join("・")}などの記載を検出。`
-      : `${label}。`;
+  // headline：1行のみ
+  const headline = financialDigest.performance
+    ? `${label}（売上${growthPhrase(financialDigest.performance.salesGrowth)}・営業利益${growthPhrase(financialDigest.performance.operatingProfitGrowth)}）`
+    : label;
 
-  // plainSummary：箇条書き形式のクリーンな文章（生テキスト転記なし）
-  const plainSummaryLines: string[] = [`${label}。`];
-  if (financialDigest.performanceSummary) {
-    plainSummaryLines.push(financialDigest.performanceSummary);
-  }
-  if (financialDigest.forecastSummary) {
-    plainSummaryLines.push(financialDigest.forecastSummary);
-  }
-  if (financialDigest.dividendSummary) {
-    plainSummaryLines.push(financialDigest.dividendSummary);
-  }
+  // plainSummary：判定 + 業績/予想/配当を簡潔に
+  const plainSummaryLines: string[] = [label];
+  if (financialDigest.performanceSummary) plainSummaryLines.push(financialDigest.performanceSummary);
+  if (financialDigest.forecastSummary) plainSummaryLines.push(financialDigest.forecastSummary);
+  if (financialDigest.dividendSummary) plainSummaryLines.push(financialDigest.dividendSummary);
   if (!financialDigest.performanceSummary) {
-    for (const t of detectedTopics.slice(0, 6)) {
-      plainSummaryLines.push(`・${t.category}: ${t.keywords.slice(0, 5).join("・")}を検出`);
-    }
+    const cats = detectedTopics.map((t) => t.category).slice(0, 5).join("・");
+    if (cats) plainSummaryLines.push(`検出項目: ${cats}`);
   }
-  plainSummaryLines.push(warnings.length ? `・注意語句: ${warnings.slice(0, 3).map((w) => w.label).join("・")}` : "・強い注意語句は目立ちません");
   const plainSummary = plainSummaryLines.join("\n");
 
-  // bullets：構造化テキストのみ（生テキストなし）
+  // bullets：売上利益以外（セグメント・キャッシュフロー・財務状態・リスク）に集約
   const bullets: string[] = [];
-  if (financialDigest.performanceSummary) bullets.push(financialDigest.performanceSummary);
-  if (financialDigest.forecastSummary) bullets.push(financialDigest.forecastSummary);
-  if (financialDigest.dividendSummary) bullets.push(financialDigest.dividendSummary);
-  for (const t of detectedTopics.filter((t) => !["売上", "利益", "通期予想", "配当"].includes(t.category)).slice(0, 3)) {
-    bullets.push(`${t.category}: ${t.keywords.slice(0, 4).join("・")}を検出`);
+  for (const t of detectedTopics.filter((t) => !["売上", "利益", "通期予想", "配当"].includes(t.category)).slice(0, 4)) {
+    bullets.push(`${t.category}: ${t.keywords.slice(0, 4).join("・")}（${t.pages.slice(0, 3).join("・")}P）`);
   }
 
-  // goodPoints：パース済みキーフィギュアを優先、なければ検出したポジティブキーワード
-  let goodPoints: string[];
-  if (keyFigures.length) {
-    goodPoints = keyFigures.slice(0, 5);
-  } else {
-    const posKws = unique(detectedTopics.flatMap((t) => t.keywords.filter((kw) => positiveWords.includes(kw)))).slice(0, 5);
-    goodPoints = posKws.length ? posKws.map((kw) => `「${kw}」の記載を検出`) : ["好材料として明確に分類できる語句は多くありません。"];
-  }
-
-  // concernPoints：警告項目の簡潔な説明（生テキスト転記なし）
-  const concernPoints: string[] = warnings.length
-    ? warnings.slice(0, 5).map((w) => `${w.label}（${w.level === "high" ? "要注意" : "参考"}）: ${w.comment}`)
-    : ["強い注意語句は目立ちません。"];
-
-  // topicSummaries：カテゴリ別の構造化サマリー（生テキストなし）
-  const topicSummaries = detectedTopics.slice(0, 8).map((topic) => {
-    let summary: string;
-    if (topic.category === "売上" && financialDigest.performanceSummary) {
-      summary = financialDigest.performanceSummary;
-    } else if (topic.category === "利益" && financialDigest.performanceSummary) {
-      summary = financialDigest.performanceSummary;
-    } else if (topic.category === "通期予想" && financialDigest.forecastSummary) {
-      summary = financialDigest.forecastSummary;
-    } else if (topic.category === "配当" && financialDigest.dividendSummary) {
-      summary = financialDigest.dividendSummary;
-    } else {
-      summary = `${topic.keywords.slice(0, 5).join("・")}などの記載を検出。`;
+  // goodPoints：ポジティブな根拠のみ（前年比の伸び項目 or 検出キーワード）。keyFiguresとは別物にする
+  const goodPoints: string[] = [];
+  if (financialDigest.performance) {
+    const p = financialDigest.performance;
+    const checks: Array<[string, string]> = [
+      ["売上", p.salesGrowth],
+      ["営業利益", p.operatingProfitGrowth],
+      ["経常利益", p.ordinaryProfitGrowth],
+      ["純利益", p.netProfitGrowth]
+    ];
+    for (const [name, g] of checks) {
+      const n = growthNumber(g);
+      if (typeof n === "number" && n > 0) goodPoints.push(`${name}が前年同期比 ${n.toFixed(1)}% 増`);
     }
-    return { category: topic.category, summary, pages: topic.pages };
-  });
-
-  if (!topicSummaries.length) {
-    topicSummaries.push({
-      category: "総合",
-      summary: "決算短信から十分なキーワードを抽出できませんでした。PDFの文字埋め込み状態をご確認ください。",
-      pages: []
-    });
   }
+  if (financialDigest.forecast) {
+    const f = financialDigest.forecast;
+    const n = growthNumber(f.operatingProfitGrowth);
+    if (typeof n === "number" && n > 0) goodPoints.push(`通期予想 営業利益 ${n.toFixed(1)}% 増`);
+  }
+  if (financialDigest.dividendRevision === "有" && financialDigest.dividend) {
+    goodPoints.push(`配当予想の修正あり（${financialDigest.dividend}）`);
+  }
+  if (!goodPoints.length) {
+    const posKws = unique(detectedTopics.flatMap((t) => t.keywords.filter((kw) => positiveWords.includes(kw)))).slice(0, 4);
+    if (posKws.length) goodPoints.push(...posKws.map((kw) => `「${kw}」の記載あり`));
+  }
+  if (!goodPoints.length) goodPoints.push("自動検出ではポジティブ材料を抽出できませんでした");
 
-  return {
-    verdict,
-    verdictLabel: label,
-    headline,
-    plainSummary,
-    bullets,
-    goodPoints,
-    concernPoints,
-    topicSummaries,
-    keyFigures,
-    method: "無料AI診断（外部APIなし・端末内キーワード解析）"
-  };
-}
-
-export function analyzeDisclosureText(input: {
-  ticker?: string;
-  companyName?: string;
-  disclosure?: DisclosureItem;
-  pages: Array<{ pageNumber: number; text: string }>;
-}): AnalysisReport {
-  const pages = input.pages;
-  const rawText = pages.map((page) => page.text).join("\n");
-  const topics = analyzeTopics(pages);
-  const warnings = analyzeWarnings(pages);
-  const sourceCheckpoints = buildCheckpoints(pages);
-  const extractedNumbers = extractNumbers(pages);
-  const financialDigest = parseFinancialDigest(rawText);
-  const detectedTopicCount = topics.filter((topic) => topic.detected).length;
-  const oneLineSummary = buildSummary(topics, warnings, financialDigest);
-  const freeAiDigest = buildFreeAiDigest(topics, warnings, extractedNumbers, rawText, financialDigest);
-
-  const aiPrompt = buildAiPrompt({
-    ticker: input.ticker || input.disclosure?.ticker,
-    companyName: input.companyName || input.disclosure?.companyName,
-    title: input.disclosure?.title,
-    checkpoints: sourceCheckpoints,
-    topics,
-    warnings,
-    textSample: compactText(rawText, 6000)
-  });
-
-  return {
-    ticker: input.ticker || input.disclosure?.ticker,
-    companyName: input.companyName || input.disclosure?.companyName,
-    analyzedAt: new Date().toISOString(),
-    sourceDisclosure: input.disclosure,
-    oneLineSummary,
-    overallTone: decideTone(topics, warnings),
-    confidence: decideConfidence(rawText.length, detectedTopicCount),
-    topics,
-    warnings,
-    sourceCheckpoints,
-    extractedNumbers,
-    freeAiDigest,
-    aiPrompt,
-    disclaimer: DISCLAIMER
-  };
-}
+  // concernPoints：警告ラベルのみ（コメントは詳細ページへ）
+  const concernPoints: string[] = [];
+  if (financialDigest.performance) {
+    const p = financialDigest.performance;
+    const checks: Array<[string, string]> = [
+      ["売上", p.salesGrowth],
+      ["営業利益", p.operatingProfitGrowth],
+      ["経常利益", p.ordinaryProfitGrowth],
+      ["純利益", p.netProfitGrowth]
+    ];
+    for (const [name, g] of checks) {
+      const n = growthNumber(g);
+      if (typeof n === "number" && n < 0) concernPoints.push(`${name}が前年同期比 ${Math.abs(n).toFixed(1)}% 減`);
+    }
+  }
+  for (const w of warnings.slice(0, 
