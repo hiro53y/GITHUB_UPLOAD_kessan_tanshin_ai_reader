@@ -3,6 +3,32 @@ import type { AppSettings, DisclosureFetchResult, HistoryItem } from "./types";
 export const SETTINGS_KEY = "kessan-reader-settings:v1";
 const HISTORY_KEY = "kessan-reader-history:v1";
 const DISCLOSURE_CACHE_PREFIX = "kessan-reader-disclosure-cache:v1:";
+const LAST_TICKER_KEY = "kessan-reader-last-ticker:v1";
+
+export type LastTickerRecord = {
+  ticker: string;
+  companyName?: string;
+};
+
+export function getLastTicker(): LastTickerRecord | undefined {
+  try {
+    const raw = localStorage.getItem(LAST_TICKER_KEY);
+    if (!raw) return undefined;
+    const parsed = JSON.parse(raw) as LastTickerRecord;
+    if (!parsed.ticker) return undefined;
+    return parsed;
+  } catch {
+    return undefined;
+  }
+}
+
+export function saveLastTicker(record: LastTickerRecord): void {
+  try {
+    localStorage.setItem(LAST_TICKER_KEY, JSON.stringify(record));
+  } catch {
+    /* ignore quota errors */
+  }
+}
 
 export const defaultSettings: AppSettings = {
   lookbackDays: 120,
@@ -69,19 +95,4 @@ export function estimateStorageSize(): string {
 
 export function getDisclosureCache(key: string, ttlMs = 10 * 60 * 1000): DisclosureFetchResult | undefined {
   try {
-    const raw = localStorage.getItem(`${DISCLOSURE_CACHE_PREFIX}${key}`);
-    if (!raw) return undefined;
-    const parsed = JSON.parse(raw) as { storedAt: number; value: DisclosureFetchResult };
-    if (Date.now() - parsed.storedAt > ttlMs) return undefined;
-    return {
-      ...parsed.value,
-      userMessage: `${parsed.value.userMessage}（短時間の再取得を避けるため、保存済み結果を表示しています）`
-    };
-  } catch {
-    return undefined;
-  }
-}
-
-export function setDisclosureCache(key: string, value: DisclosureFetchResult): void {
-  localStorage.setItem(`${DISCLOSURE_CACHE_PREFIX}${key}`, JSON.stringify({ storedAt: Date.now(), value }));
-}
+    const raw = localStorage.getItem(`$

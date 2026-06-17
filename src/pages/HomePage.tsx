@@ -2,6 +2,7 @@ import { BarChart3, ClipboardCopy, ExternalLink, FileUp, Link, Search, ShieldAle
 import { useRef, useState } from "react";
 import type { HistoryItem } from "../lib/types";
 import { formatDateTime } from "../lib/utils";
+import { getLastTicker } from "../lib/storage";
 import { Card, OutlineButton, PrimaryButton, StatusBadge } from "../components/Card";
 
 export function HomePage({
@@ -19,8 +20,9 @@ export function HomePage({
   onOpenReport: () => void;
   onOpenHistory: () => void;
 }) {
-  const [ticker, setTicker] = useState("5592");
-  const [companyName, setCompanyName] = useState("");
+  const lastTicker = getLastTicker();
+  const [ticker, setTicker] = useState(lastTicker?.ticker ?? "");
+  const [companyName, setCompanyName] = useState(lastTicker?.companyName ?? "");
   const [pdfUrl, setPdfUrl] = useState("");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const openYahooCodeSearch = () => {
@@ -162,11 +164,4 @@ export function HomePage({
             レポートを見る
           </OutlineButton>
           <OutlineButton onClick={() => navigator.clipboard?.writeText("決算短信AIリーダー: 標準ルール分析で決算資料を読む補助PWA")}>
-            <ClipboardCopy className="h-5 w-5" />
-            アプリ説明をコピー
-          </OutlineButton>
-        </div>
-      </Card>
-    </div>
-  );
-}
+            <ClipboardCopy classN

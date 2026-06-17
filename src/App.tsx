@@ -1,4 +1,4 @@
-import { Bell, FileText } from "lucide-react";
+import { FileText } from "lucide-react";
 import { useMemo, useState } from "react";
 import { BottomNav, type NavKey } from "./components/BottomNav";
 import { Card } from "./components/Card";
@@ -7,6 +7,7 @@ import { HistoryPage } from "./pages/HistoryPage";
 import { HomePage } from "./pages/HomePage";
 import { ReportPage } from "./pages/ReportPage";
 import { SettingsPage } from "./pages/SettingsPage";
+import { fetchAiSummary } from "./lib/aiSummarizer";
 import { fetchLatestDisclosureByTicker } from "./lib/disclosureFetcher";
 import { extractPdfText } from "./lib/pdfExtract";
 import { buildMarkdownReport } from "./lib/promptBuilder";
@@ -18,6 +19,7 @@ import {
   getSettings,
   listHistory,
   saveHistoryItem,
+  saveLastTicker,
   saveSettings
 } from "./lib/storage";
 import type { AnalysisReport, DisclosureFetchResult, DisclosureItem, FreeAiDigest, HistoryItem, LoadingStep } from "./lib/types";
@@ -161,8 +163,32 @@ export default function App() {
         pages: pdf.pages
       });
       setStep(6, "success", "重要語句検出完了");
-      setStep(7, "success", "標準レポート生成完了");
-      setStep(8, "success", "完了");
+
+      // step 7: AI要約（有効かつWorker URL設定済みのときのみ実行）
+      if (settings.aiSummaryEnabled && settings.proxyUrl) {
+        setStep(7, "processing", "AI要約を生成中");
+        addLog("Cloudflare Workers AI に要約をリクエストしました");
+        const aiResult = await fetchAiSummary(
+          settings.proxyUrl,
+          pdf.rawText,
+          nextReport.ticker,
+          nextReport.companyName,
+          disclosure.title
+        );
+        if (aiResult.ok && aiResult.summary) {
+          nextReport.aiSummary = aiResult.summary;
+          setStep(7, "success", "AI要約完了");
+          addLog("AI要約を取得しました");
+        } else {
+          setStep(7, "failed", aiResult.error || "AI要約に失敗");
+          addLog(`AI要約失敗: ${aiResult.error || "不明なエラー"}`);
+        }
+      } else {
+        setStep(7, "skipped", settings.aiSummaryEnabled ? "Worker URL未設定" : "AI要約OFF");
+      }
+
+      setStep(8, "success", "標準レポート生成完了");
+      setStep(9, "success", "完了");
       setReport(nextReport);
       saveReportHistory(nextReport, sourceFetchResult, pdf.rawText);
       setDetailReport(false);
@@ -210,6 +236,7 @@ export default function App() {
     setSteps(createInitialSteps());
     setLogs([]);
     setLastTickerRequest({ ticker, companyName });
+    if (isValidTicker(ticker)) saveLastTicker({ ticker, companyName });
 
     if (!isValidTicker(ticker)) {
       setStep(1, "failed", "4桁の銘柄コードを入力してください");
@@ -378,14 +405,6 @@ export default function App() {
             <h1 className="break-words text-[2rem] font-black leading-tight">{header.title}</h1>
             <p className="mt-1 break-words text-lg font-bold text-blue-100">{header.sub}</p>
           </div>
-          <button
-            type="button"
-            onClick={() => notify("通知ベルはMVPでは未実装です")}
-            className="grid h-14 w-14 shrink-0 place-items-center rounded-2xl border border-white/30 bg-white/10"
-            aria-label="通知"
-          >
-            <Bell className="h-7 w-7" />
-          </button>
         </div>
       </header>
 
@@ -439,27 +458,4 @@ export default function App() {
           />
         ) : null}
 
-        {active === "settings" ? (
-          <SettingsPage settings={settings} onChange={persistSettings} historyCount={history.length} storageSize={storageSize} onClearHistory={removeAllHistory} />
-        ) : null}
-
-        {!report && active === "report" ? (
-          <Card>
-            <div className="flex items-center gap-3 text-slate-600">
-              <FileText className="h-6 w-6" />
-              <span>分析後にレポートが表示されます。</span>
-            </div>
-          </Card>
-        ) : null}
-      </main>
-
-      {toast ? (
-        <div className="fixed inset-x-4 bottom-24 z-40 mx-auto max-w-xl rounded-xl bg-slate-950 px-4 py-3 text-center text-sm font-bold text-white shadow-lg">
-          {toast}
-        </div>
-      ) : null}
-
-      <BottomNav active={active} onChange={setActive} />
-    </div>
-  );
-}
+        {active ===
