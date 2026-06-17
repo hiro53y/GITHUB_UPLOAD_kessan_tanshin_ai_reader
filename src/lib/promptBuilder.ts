@@ -104,4 +104,36 @@ ${report.oneLineSummary}`);
 
   if (metricsTable || forecastTable) {
     const blocks: string[] = ["## 主要数値"];
-    if (metricsTable) blocks.push("### 実績\n" + metricsT
+    if (metricsTable) blocks.push("### 実績\n" + metricsTable);
+    if (forecastTable) blocks.push("### 通期予想\n" + forecastTable);
+    if (dig.forecastRevisionLine) blocks.push(`- ${dig.forecastRevisionLine}`);
+    if (dig.dividendLine) blocks.push(`- ${dig.dividendLine}`);
+    sections.push(blocks.join("\n\n"));
+  }
+
+  sections.push(`## ポジティブ
+${goodBlock}
+
+## 注意点
+${concernBlock}`);
+
+  if (otherTopics) {
+    sections.push(`## その他の記載
+${otherTopics}`);
+  }
+
+  if (report.warnings.length) {
+    sections.push(`## 検出された注意語句
+${warningsBlock}`);
+  }
+
+  if (checkpoints) {
+    sections.push(`## 原文を確認すべきページ
+${checkpoints}`);
+  }
+
+  sections.push(`---
+${report.disclaimer}`);
+
+  return sections.join("\n\n") + "\n";
+}

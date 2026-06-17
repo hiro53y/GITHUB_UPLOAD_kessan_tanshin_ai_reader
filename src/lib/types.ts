@@ -160,4 +160,10 @@ export type HistoryItem = {
   extractedTextSample: string;
   status: "success" | "failed";
   report?: AnalysisReport;
-  fetchResult?: Disclos
+  fetchResult?: DisclosureFetchResult;
+};
+
+export type AnalysisInputSource =
+  | { kind: "ticker"; ticker: string; companyName?: string }
+  | { kind: "file"; file: File; ticker?: string; companyName?: string }
+  | { kind: "url"; url: string; ticker?: string; companyName?: string };

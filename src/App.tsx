@@ -459,4 +459,7 @@ export default function App() {
         </div>
       ) : null}
 
-      <BottomNav active={active} o
+      <BottomNav active={active} onChange={setActive} />
+    </div>
+  );
+}

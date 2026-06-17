@@ -570,4 +570,79 @@ function buildFreeAiDigest(
       if (typeof n === "number" && n < 0) concernPoints.push(`${name}が前年同期比 ${Math.abs(n).toFixed(1)}% 減`);
     }
   }
-  for (const w of warnings.slice(0, 
+  for (const w of warnings.slice(0, 4)) {
+    const tag = w.level === "high" ? "要注意" : "参考";
+    concernPoints.push(`${w.label}（${tag}）`);
+  }
+  if (!concernPoints.length) concernPoints.push("強い注意語句は検出されませんでした");
+
+  // topicSummaries：売上利益以外のカテゴリだけ（重複排除）
+  const otherTopics = detectedTopics.filter((t) => !["売上", "利益", "通期予想", "配当"].includes(t.category));
+  const topicSummaries = otherTopics.slice(0, 6).map((topic) => ({
+    category: topic.category,
+    summary: `${topic.keywords.slice(0, 5).join("・")}を検出`,
+    pages: topic.pages
+  }));
+
+  return {
+    verdict,
+    verdictLabel: label,
+    headline,
+    plainSummary,
+    bullets,
+    goodPoints,
+    concernPoints,
+    topicSummaries,
+    keyFigures,
+    keyMetrics: financialDigest.keyMetrics,
+    forecastMetrics: financialDigest.forecastMetrics,
+    dividendLine: financialDigest.dividendLine,
+    forecastRevisionLine: financialDigest.forecastRevisionLine,
+    method: "端末内キーワード解析（外部APIなし）"
+  };
+}
+
+export function analyzeDisclosureText(input: {
+  ticker?: string;
+  companyName?: string;
+  disclosure?: DisclosureItem;
+  pages: Array<{ pageNumber: number; text: string }>;
+}): AnalysisReport {
+  const pages = input.pages;
+  const rawText = pages.map((page) => page.text).join("\n");
+  const topics = analyzeTopics(pages);
+  const warnings = analyzeWarnings(pages);
+  const sourceCheckpoints = buildCheckpoints(pages);
+  const extractedNumbers = extractNumbers(pages);
+  const financialDigest = parseFinancialDigest(rawText);
+  const detectedTopicCount = topics.filter((topic) => topic.detected).length;
+  const oneLineSummary = buildSummary(topics, warnings, financialDigest);
+  const freeAiDigest = buildFreeAiDigest(topics, warnings, extractedNumbers, rawText, financialDigest);
+
+  const aiPrompt = buildAiPrompt({
+    ticker: input.ticker || input.disclosure?.ticker,
+    companyName: input.companyName || input.disclosure?.companyName,
+    title: input.disclosure?.title,
+    checkpoints: sourceCheckpoints,
+    topics,
+    warnings,
+    textSample: compactText(rawText, 6000)
+  });
+
+  return {
+    ticker: input.ticker || input.disclosure?.ticker,
+    companyName: input.companyName || input.disclosure?.companyName,
+    analyzedAt: new Date().toISOString(),
+    sourceDisclosure: input.disclosure,
+    oneLineSummary,
+    overallTone: decideTone(topics, warnings),
+    confidence: decideConfidence(rawText.length, detectedTopicCount),
+    topics,
+    warnings,
+    sourceCheckpoints,
+    extractedNumbers,
+    freeAiDigest,
+    aiPrompt,
+    disclaimer: DISCLAIMER
+  };
+}
