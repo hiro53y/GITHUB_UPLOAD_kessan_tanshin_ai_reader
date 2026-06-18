@@ -85,7 +85,9 @@ export default defineConfig({
     })
   ],
   build: {
-    minify: false
+    // 本番バンドルを最小化（esbuildは高速・依存追加なし）
+    minify: "esbuild",
+    sourcemap: false
   },
   server: {
     proxy: {

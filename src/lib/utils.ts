@@ -1,6 +1,8 @@
 import type { LoadingStep } from "./types";
+import { SETTINGS_KEY } from "./storage";
 
-const SETTINGS_KEY = "kessan-reader-settings:v1";
+/** アプリビルド表示用バージョン（変更時はここを更新するだけでヘッダ・設定の両方に反映） */
+export const APP_BUILD_TAG = "2026-06-18.1";
 
 export const TDNET_BASE_URL = "https://www.release.tdnet.info";
 export const TDNET_INBS_URL = `${TDNET_BASE_URL}/inbs/`;

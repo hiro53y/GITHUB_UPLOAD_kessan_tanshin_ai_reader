@@ -34,8 +34,6 @@ export const defaultSettings: AppSettings = {
   lookbackDays: 120,
   tdnetEnabled: true,
   proxyUrl: "",
-  showSourceCheckpoints: true,
-  analysisSensitivity: "standard",
   aiSummaryEnabled: false
 };
 
@@ -50,8 +48,13 @@ export function getSettings(): AppSettings {
   }
 }
 
-export function saveSettings(settings: AppSettings): void {
-  localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+export function saveSettings(settings: AppSettings): { ok: boolean; error?: string } {
+  try {
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
 }
 
 export function listHistory(): HistoryItem[] {
@@ -66,14 +69,24 @@ export function listHistory(): HistoryItem[] {
 export const HISTORY_LIMIT = 50;
 
 /**
- * 履歴を保存。50件超過で古いものをトリミングした場合は trimmed=true を返す。
+ * 履歴を保存。QuotaExceeded時は段階的にトリム件数を増やしてリトライ。
  */
-export function saveHistoryItem(item: HistoryItem): { trimmed: boolean } {
+export function saveHistoryItem(item: HistoryItem): { ok: boolean; trimmed: boolean; error?: string } {
   const current = listHistory();
   const merged = [item, ...current.filter((entry) => entry.id !== item.id)];
-  const next = merged.slice(0, HISTORY_LIMIT);
-  localStorage.setItem(HISTORY_KEY, JSON.stringify(next));
-  return { trimmed: merged.length > HISTORY_LIMIT };
+  let next = merged.slice(0, HISTORY_LIMIT);
+  for (let limit = HISTORY_LIMIT; limit >= 5; limit -= 10) {
+    try {
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(next));
+      return { ok: true, trimmed: merged.length > HISTORY_LIMIT || limit < HISTORY_LIMIT };
+    } catch (error) {
+      next = next.slice(0, Math.max(5, limit - 10));
+      if (limit <= 5) {
+        return { ok: false, trimmed: true, error: error instanceof Error ? error.message : String(error) };
+      }
+    }
+  }
+  return { ok: false, trimmed: true };
 }
 
 export function deleteHistoryItem(id: string): void {

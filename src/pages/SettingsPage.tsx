@@ -2,6 +2,7 @@ import { ShieldCheck } from "lucide-react";
 import { SettingsPanel } from "../components/SettingsPanel";
 import { Card } from "../components/Card";
 import type { AppSettings } from "../lib/types";
+import { APP_BUILD_TAG } from "../lib/utils";
 
 export function SettingsPage({
   settings,
@@ -32,7 +33,7 @@ export function SettingsPage({
           </div>
           <div className="flex justify-between">
             <span className="font-bold">build</span>
-            <span>2026-05-10.1</span>
+            <span>{APP_BUILD_TAG}</span>
           </div>
           <div className="flex justify-between">
             <span className="font-bold">AI要約</span>

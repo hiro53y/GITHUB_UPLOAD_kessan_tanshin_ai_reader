@@ -7,6 +7,7 @@ import { Card, OutlineButton, PrimaryButton, StatusBadge } from "../components/C
 
 export function HomePage({
   latestHistory,
+  isProcessing,
   onAnalyzeTicker,
   onAnalyzeFile,
   onAnalyzeUrl,
@@ -15,6 +16,7 @@ export function HomePage({
   onCopy
 }: {
   latestHistory?: HistoryItem;
+  isProcessing: boolean;
   onAnalyzeTicker: (ticker: string, companyName?: string) => void;
   onAnalyzeFile: (file: File, ticker?: string, companyName?: string) => void;
   onAnalyzeUrl: (url: string, ticker?: string, companyName?: string) => void;
@@ -83,16 +85,16 @@ export function HomePage({
             <ExternalLink className="h-5 w-5" />
             Yahoo!ファイナンスで銘柄コード検索
           </OutlineButton>
-          <PrimaryButton onClick={() => onAnalyzeTicker(ticker, companyName || undefined)}>
+          <PrimaryButton onClick={() => onAnalyzeTicker(ticker, companyName || undefined)} disabled={isProcessing || !ticker}>
             <Search className="h-5 w-5" />
-            最新決算短信を取得して分析
+            {isProcessing ? "処理中…" : "最新決算短信を取得して分析"}
           </PrimaryButton>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <OutlineButton onClick={() => fileInputRef.current?.click()}>
+            <OutlineButton onClick={() => fileInputRef.current?.click()} disabled={isProcessing}>
               <FileUp className="h-5 w-5" />
               手動PDFアップロード
             </OutlineButton>
-            <OutlineButton onClick={() => pdfUrl && onAnalyzeUrl(pdfUrl, ticker || undefined, companyName || undefined)} disabled={!pdfUrl}>
+            <OutlineButton onClick={() => pdfUrl.trim() && onAnalyzeUrl(pdfUrl.trim(), ticker || undefined, companyName || undefined)} disabled={!pdfUrl.trim() || isProcessing}>
               <Link className="h-5 w-5" />
               PDF URLを貼り付けて分析
             </OutlineButton>

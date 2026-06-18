@@ -318,20 +318,37 @@ function growthTone(value: string): KeyMetricRow["growthTone"] {
   return "flat";
 }
 
-function formatYenAmount(rawValue: string): string {
+type AmountUnit = "百万円" | "千円" | "円";
+
+/**
+ * 数値を本来の通貨単位（百万円・千円・円）に対して、読みやすい億円/百万円/円に整形。
+ */
+function formatYenAmount(rawValue: string, unit: AmountUnit = "百万円"): string {
   const cleaned = rawValue.replace(/[△▲]/g, "-").replace(/,/g, "").trim();
   const num = Number(cleaned);
-  if (!Number.isFinite(num)) return `${rawValue}百万円`;
-  const abs = Math.abs(num);
-  if (abs >= 1_000_000) {
-    const oku = num / 100;
-    return `${oku.toLocaleString("ja-JP", { maximumFractionDigits: 0 })}億円`;
+  if (!Number.isFinite(num)) return `${rawValue}${unit}`;
+  const yen = unit === "百万円" ? num * 1_000_000 : unit === "千円" ? num * 1_000 : num;
+  const absYen = Math.abs(yen);
+  if (absYen >= 1_000_000_000_000) {
+    return `${(yen / 1_000_000_000_000).toLocaleString("ja-JP", { maximumFractionDigits: 2 })}兆円`;
   }
-  if (abs >= 10_000) {
-    const oku = num / 100;
-    return `${oku.toLocaleString("ja-JP", { maximumFractionDigits: 1 })}億円`;
+  if (absYen >= 100_000_000) {
+    return `${(yen / 100_000_000).toLocaleString("ja-JP", { maximumFractionDigits: 1 })}億円`;
   }
-  return `${num.toLocaleString("ja-JP")}百万円`;
+  if (absYen >= 1_000_000) {
+    return `${(yen / 1_000_000).toLocaleString("ja-JP", { maximumFractionDigits: 1 })}百万円`;
+  }
+  if (absYen >= 10_000) {
+    return `${(yen / 10_000).toLocaleString("ja-JP", { maximumFractionDigits: 1 })}万円`;
+  }
+  return `${yen.toLocaleString("ja-JP")}円`;
+}
+
+/** 決算短信本文から「（単位：百万円）」「単位:千円」等を検出して通貨単位を判定 */
+function detectAmountUnit(text: string): AmountUnit {
+  if (/単位[:：]?\s*千円/.test(text) || /[（(]\s*千円\s*[）)]/.test(text)) return "千円";
+  if (/単位[:：]?\s*[ＭM]?円(?!万)/.test(text) || /[（(]\s*円\s*[）)]/.test(text)) return "円";
+  return "百万円";
 }
 
 function metricWithGrowth(label: string, value: string, growth: string): string {
@@ -421,9 +438,25 @@ function parsePerformanceByLabels(text: string): FinancialMetricRow | undefined 
   };
 }
 
-/** 通期予想を「通期」キーワード以降のラベル検索で抽出 */
+/** 通期予想を「通期」キーワード以降のラベル検索で抽出。
+ *  本文中の「通期業績は」等にマッチするのを避けるため、表っぽい強キーワードを優先する。 */
 function parseForecastByLabels(text: string): ForecastMetricRow | undefined {
-  const idx = text.indexOf("通期");
+  const strongAnchors = [
+    "連結業績予想",
+    "業績予想（連結）",
+    "業績予想(連結)",
+    "通期連結業績予想",
+    "通期業績予想"
+  ];
+  let idx = -1;
+  for (const anchor of strongAnchors) {
+    const i = text.indexOf(anchor);
+    if (i >= 0) { idx = i; break; }
+  }
+  if (idx < 0) {
+    const m = text.match(/通期[\s\S]{0,200}(?:予想|百万円|千円)/u);
+    if (m && m.index !== undefined) idx = m.index;
+  }
   if (idx < 0) return undefined;
   const segment = text.slice(idx, idx + 2000);
 
@@ -452,6 +485,7 @@ function parseForecastByLabels(text: string): ForecastMetricRow | undefined {
 
 function parseFinancialDigest(rawText: string): FinancialDigestBase {
   const text = rawText.replace(/[　\s]+/g, " ");
+  const unit = detectAmountUnit(rawText);
   const metricValue = "([△▲\\-]?\\d[\\d,]*(?:\\.\\d+)?)";
   const performanceRegex = new RegExp(
     `(20\\d{2}年[0-9０-９]+月期第[0-9０-９一二三四１-４]+四半期)\\s+${metricValue}\\s+${metricValue}\\s+${metricValue}\\s+${metricValue}\\s+${metricValue}\\s+${metricValue}\\s+${metricValue}\\s+${metricValue}`
@@ -492,9 +526,20 @@ function parseFinancialDigest(rawText: string): FinancialDigestBase {
 
   const forecastRevision = text.match(/業績予想からの修正の有無[:：]\s*([有無])/u)?.[1];
   const dividendRevision = text.match(/配当予想からの修正の有無[:：]\s*([有無])/u)?.[1];
-  // 配当予想行：半角(予想)・全角（予想）どちらにも対応
-  const dividendMatch = text.match(/20\d{2}年[0-9０-９]+月期\s*[（(]\s*予想\s*[）)]\s+([△▲\-\d.,]+)\s+([△▲\-\d.,]+)/u);
-  const dividend = dividendMatch ? `期末${dividendMatch[1]}円、年間${dividendMatch[2]}円` : undefined;
+  // 配当：5値（第1Q/第2Q/第3Q/期末/年間）が並ぶ表になるため、最初2値で代用すると致命的に誤る。
+  // 「期末」「年間」のラベル直後の数値を個別に拾う。
+  const dividendSegment = (() => {
+    const m = text.match(/20\d{2}年[0-9０-９]+月期\s*[（(]\s*予想\s*[）)][\s\S]{0,400}/u);
+    return m ? m[0] : text;
+  })();
+  const dividendYearEnd = findValueAfter(dividendSegment, "期末")?.value;
+  const dividendAnnual = findValueAfter(dividendSegment, "年間")?.value
+    ?? findValueAfter(dividendSegment, "合計")?.value;
+  const dividend = dividendYearEnd && dividendAnnual
+    ? `期末${dividendYearEnd}円、年間${dividendAnnual}円`
+    : dividendAnnual
+      ? `年間${dividendAnnual}円`
+      : undefined;
 
   const growthValues = performance
     ? [performance.salesGrowth, performance.operatingProfitGrowth, performance.ordinaryProfitGrowth, performance.netProfitGrowth]
@@ -517,30 +562,30 @@ function parseFinancialDigest(rawText: string): FinancialDigestBase {
     : undefined;
 
   const keyFigures = [
-    performance ? `売上高: ${formatYenAmount(performance.sales)}（${growthPhrase(performance.salesGrowth)}）` : undefined,
-    performance ? `営業利益: ${formatYenAmount(performance.operatingProfit)}（${growthPhrase(performance.operatingProfitGrowth)}）` : undefined,
-    performance ? `経常利益: ${formatYenAmount(performance.ordinaryProfit)}（${growthPhrase(performance.ordinaryProfitGrowth)}）` : undefined,
-    performance ? `純利益: ${formatYenAmount(performance.netProfit)}（${growthPhrase(performance.netProfitGrowth)}）` : undefined,
-    forecast ? `通期予想売上高: ${formatYenAmount(forecast.sales)}（${growthPhrase(forecast.salesGrowth)}）` : undefined,
-    forecast ? `通期予想営業利益: ${formatYenAmount(forecast.operatingProfit)}（${growthPhrase(forecast.operatingProfitGrowth)}）` : undefined,
+    performance ? `売上高: ${formatYenAmount(performance.sales, unit)}（${growthPhrase(performance.salesGrowth)}）` : undefined,
+    performance ? `営業利益: ${formatYenAmount(performance.operatingProfit, unit)}（${growthPhrase(performance.operatingProfitGrowth)}）` : undefined,
+    performance ? `経常利益: ${formatYenAmount(performance.ordinaryProfit, unit)}（${growthPhrase(performance.ordinaryProfitGrowth)}）` : undefined,
+    performance ? `純利益: ${formatYenAmount(performance.netProfit, unit)}（${growthPhrase(performance.netProfitGrowth)}）` : undefined,
+    forecast ? `通期予想売上高: ${formatYenAmount(forecast.sales, unit)}（${growthPhrase(forecast.salesGrowth)}）` : undefined,
+    forecast ? `通期予想営業利益: ${formatYenAmount(forecast.operatingProfit, unit)}（${growthPhrase(forecast.operatingProfitGrowth)}）` : undefined,
     dividend ? `配当予想: ${dividend}` : undefined
   ].filter(Boolean) as string[];
 
   const keyMetrics: KeyMetricRow[] = performance
     ? [
-        { label: "売上高", value: formatYenAmount(performance.sales), growth: growthPhrase(performance.salesGrowth), growthTone: growthTone(performance.salesGrowth) },
-        { label: "営業利益", value: formatYenAmount(performance.operatingProfit), growth: growthPhrase(performance.operatingProfitGrowth), growthTone: growthTone(performance.operatingProfitGrowth) },
-        { label: "経常利益", value: formatYenAmount(performance.ordinaryProfit), growth: growthPhrase(performance.ordinaryProfitGrowth), growthTone: growthTone(performance.ordinaryProfitGrowth) },
-        { label: "純利益", value: formatYenAmount(performance.netProfit), growth: growthPhrase(performance.netProfitGrowth), growthTone: growthTone(performance.netProfitGrowth) }
+        { label: "売上高", value: formatYenAmount(performance.sales, unit), growth: growthPhrase(performance.salesGrowth), growthTone: growthTone(performance.salesGrowth) },
+        { label: "営業利益", value: formatYenAmount(performance.operatingProfit, unit), growth: growthPhrase(performance.operatingProfitGrowth), growthTone: growthTone(performance.operatingProfitGrowth) },
+        { label: "経常利益", value: formatYenAmount(performance.ordinaryProfit, unit), growth: growthPhrase(performance.ordinaryProfitGrowth), growthTone: growthTone(performance.ordinaryProfitGrowth) },
+        { label: "純利益", value: formatYenAmount(performance.netProfit, unit), growth: growthPhrase(performance.netProfitGrowth), growthTone: growthTone(performance.netProfitGrowth) }
       ]
     : [];
 
   const forecastMetrics: KeyMetricRow[] = forecast
     ? [
-        { label: "売上高", value: formatYenAmount(forecast.sales), growth: growthPhrase(forecast.salesGrowth), growthTone: growthTone(forecast.salesGrowth) },
-        { label: "営業利益", value: formatYenAmount(forecast.operatingProfit), growth: growthPhrase(forecast.operatingProfitGrowth), growthTone: growthTone(forecast.operatingProfitGrowth) },
-        { label: "経常利益", value: formatYenAmount(forecast.ordinaryProfit), growth: growthPhrase(forecast.ordinaryProfitGrowth), growthTone: growthTone(forecast.ordinaryProfitGrowth) },
-        { label: "純利益", value: formatYenAmount(forecast.netProfit), growth: growthPhrase(forecast.netProfitGrowth), growthTone: growthTone(forecast.netProfitGrowth) }
+        { label: "売上高", value: formatYenAmount(forecast.sales, unit), growth: growthPhrase(forecast.salesGrowth), growthTone: growthTone(forecast.salesGrowth) },
+        { label: "営業利益", value: formatYenAmount(forecast.operatingProfit, unit), growth: growthPhrase(forecast.operatingProfitGrowth), growthTone: growthTone(forecast.operatingProfitGrowth) },
+        { label: "経常利益", value: formatYenAmount(forecast.ordinaryProfit, unit), growth: growthPhrase(forecast.ordinaryProfitGrowth), growthTone: growthTone(forecast.ordinaryProfitGrowth) },
+        { label: "純利益", value: formatYenAmount(forecast.netProfit, unit), growth: growthPhrase(forecast.netProfitGrowth), growthTone: growthTone(forecast.netProfitGrowth) }
       ]
     : [];
 

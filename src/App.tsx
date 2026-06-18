@@ -23,7 +23,7 @@ import {
   saveSettings
 } from "./lib/storage";
 import type { AnalysisReport, DisclosureFetchResult, DisclosureItem, FreeAiDigest, HistoryItem, LoadingStep } from "./lib/types";
-import { compactText, copyToClipboard, createId, createInitialSteps, formatDateTime, isValidTicker, normalizeTicker } from "./lib/utils";
+import { APP_BUILD_TAG, compactText, copyToClipboard, createId, createInitialSteps, formatDateTime, isValidTicker, normalizeTicker } from "./lib/utils";
 
 const defaultFreeAiDigest: FreeAiDigest = {
   verdict: "unknown",
@@ -85,6 +85,7 @@ export default function App() {
   const [lastTickerRequest, setLastTickerRequest] = useState<LastTickerRequest | undefined>();
   const [isOnline, setIsOnline] = useState<boolean>(typeof navigator === "undefined" ? true : navigator.onLine);
   const abortRef = useRef<AbortController | null>(null);
+  const notifyTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     const handleOnline = () => setIsOnline(true);
@@ -109,7 +110,13 @@ export default function App() {
     abortRef.current.abort();
     abortRef.current = null;
     setProcessing(false);
-    setSteps((current) => current.map((step) => (step.status === "processing" ? { ...step, status: "failed", detail: "中断" } : step)));
+    setSteps((current) =>
+      current.map((step) =>
+        step.status === "processing" || step.status === "waiting"
+          ? { ...step, status: "failed", detail: step.status === "waiting" ? "未到達（中断）" : "中断" }
+          : step
+      )
+    );
     notify("処理を中断しました");
   }
 
@@ -118,7 +125,11 @@ export default function App() {
 
   function notify(message: string) {
     setToast(message);
-    window.setTimeout(() => setToast(""), 2600);
+    if (notifyTimerRef.current !== null) window.clearTimeout(notifyTimerRef.current);
+    notifyTimerRef.current = window.setTimeout(() => {
+      setToast("");
+      notifyTimerRef.current = null;
+    }, 2600);
   }
 
   function setStep(id: number, status: LoadingStep["status"], detail?: string) {
@@ -131,8 +142,8 @@ export default function App() {
 
   function persistSettings(next: typeof settings) {
     setSettings(next);
-    saveSettings(next);
-    notify("設定を保存しました");
+    const result = saveSettings(next);
+    notify(result.ok ? "設定を保存しました" : `設定の保存に失敗しました（${result.error ?? "不明"}）`);
   }
 
   async function copyText(label: string, text: string) {
@@ -160,13 +171,16 @@ export default function App() {
     };
     const result = saveHistoryItem(item);
     setHistory(listHistory());
-    if (result.trimmed) {
+    if (!result.ok) {
+      notify(`履歴保存に失敗しました（容量不足）: ${result.error ?? "不明"}`);
+    } else if (result.trimmed) {
       notify("履歴が上限の50件を超えたため、最古のものを削除しました");
     }
   }
 
   async function runPdfAnalysis(input: File | string, disclosure: DisclosureItem, sourceFetchResult?: DisclosureFetchResult, signal?: AbortSignal) {
     const effectiveSignal = signal ?? startAbortController();
+    const ownerController = abortRef.current;
     try {
       setProcessing(true);
       setStep(4, input instanceof File ? "success" : "processing", input instanceof File ? "手動PDFを使用" : "PDFを取得中");
@@ -246,7 +260,9 @@ export default function App() {
       setActive("fetch");
       notify("PDF取得または解析に失敗しました");
     } finally {
-      setProcessing(false);
+      if (abortRef.current === ownerController) {
+        setProcessing(false);
+      }
     }
   }
 
@@ -425,6 +441,7 @@ export default function App() {
   }
 
   function removeAllHistory() {
+    if (typeof window !== "undefined" && !window.confirm("保存済みの全履歴を削除します。よろしいですか？")) return;
     clearHistory();
     setHistory([]);
     notify("履歴をすべて削除しました");
@@ -435,7 +452,7 @@ export default function App() {
     if (active === "report") return { title: detailReport ? "詳細レポート" : "決算分析レポート", sub: report?.companyName ? `${report.ticker || ""} ${report.companyName}` : "標準ルール分析" };
     if (active === "history") return { title: "分析履歴", sub: "保存済みレポート" };
     if (active === "settings") return { title: "設定", sub: "取得・分析オプション" };
-    return { title: "決算短信AIリーダー", sub: "build: 2026-05-09.1" };
+    return { title: "決算短信AIリーダー", sub: `build: ${APP_BUILD_TAG}` };
   })();
 
   return (
@@ -460,6 +477,7 @@ export default function App() {
         {active === "home" ? (
           <HomePage
             latestHistory={latestHistory}
+            isProcessing={processing}
             onAnalyzeTicker={(ticker, companyName) => void handleAnalyzeTicker(ticker, companyName)}
             onAnalyzeFile={(file, ticker, companyName) => void handleAnalyzeFile(file, ticker, companyName)}
             onAnalyzeUrl={(url, ticker, companyName) => void handleAnalyzeUrl(url, ticker, companyName)}

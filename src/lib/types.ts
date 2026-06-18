@@ -141,8 +141,6 @@ export type AppSettings = {
   lookbackDays: 30 | 60 | 90 | 120 | 180 | 365;
   tdnetEnabled: boolean;
   proxyUrl: string;
-  showSourceCheckpoints: boolean;
-  analysisSensitivity: "low" | "standard" | "high";
   aiSummaryEnabled: boolean;
 };
 
