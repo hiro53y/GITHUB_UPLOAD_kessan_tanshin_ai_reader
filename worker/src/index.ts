@@ -1,4 +1,4 @@
-/// <reference types="@cloudflare/workers-types" />
+import { lookupJpxDisclosures } from "./jpxDisclosures";
 
 type Env = {
   AI: {
@@ -9,7 +9,7 @@ type Env = {
   RATE_LIMITER: DurableObjectNamespace;
 };
 
-const baseAllowedHosts = new Set(["www.release.tdnet.info", "release.tdnet.info"]);
+const baseAllowedHosts = new Set(["www.release.tdnet.info", "release.tdnet.info", "www2.jpx.co.jp"]);
 
 /**
  * Durable Object ベースの IP 単位レートリミッタ。
@@ -27,6 +27,7 @@ export class RateLimiterDO {
 
   async fetch(request: Request): Promise<Response> {
     return this.state.blockConcurrencyWhile(async () => {
+      // 永続化されたカウンタを読む
       if (this.resetAt === 0) {
         const stored = await this.state.storage.get<{ count: number; resetAt: number }>("counter");
         if (stored) {
@@ -103,6 +104,7 @@ async function checkRateLimitDO(request: Request, env: Env): Promise<boolean> {
     const data = await resp.json() as { allowed: boolean };
     return data.allowed;
   } catch {
+    // DO に障害があってもアプリ全体を落とさない（fail-open）
     return true;
   }
 }
@@ -227,12 +229,9 @@ async function handleProxy(request: Request, env: Env, ctx: ExecutionContext): P
   return response;
 }
 
-export default {
-  fetch(request: Request, env: Env, ctx: ExecutionContext) {
-    const url = new URL(request.url);
-    if (url.pathname === "/ai/summarize") {
-      return handleAiSummarize(request, env).catch((error) => jsonError(error instanceof Error ? error.message : String(error), 500));
-    }
-    return handleProxy(request, env, ctx).catch((error) => jsonError(error instanceof Error ? error.message : String(error), 500));
-  }
-};
+async function handleDisclosures(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+  if (request.method === "OPTIONS") return new Response(null, { headers: corsHeaders(request.headers.get("Origin") || "*") });
+  if (request.method !== "GET") return jsonError("method_not_allowed", 405);
+  if (!(await checkRateLimitDO(request, env))) return jsonError("rate_limited", 429);
+
+  const requestUrl = 

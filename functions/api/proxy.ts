@@ -1,4 +1,4 @@
-const DEFAULT_ALLOWED_HOSTS = ["www.release.tdnet.info", "release.tdnet.info"];
+const DEFAULT_ALLOWED_HOSTS = ["www.release.tdnet.info", "release.tdnet.info", "www2.jpx.co.jp"];
 const RATE_WINDOW_MS = 60_000;
 const RATE_LIMIT = 60;
 const hits = new Map<string, { count: number; expiresAt: number }>();
@@ -95,7 +95,7 @@ export async function onRequest(context: ProxyContext): Promise<Response> {
       headers,
       body: request.method === "POST" ? request.body : undefined,
       cf: request.method === "GET" ? { cacheTtl: 300, cacheEverything: true } : undefined
-    });
+    } as RequestInit);
 
     const response = withCors(upstream);
     if (request.method === "GET" && upstream.ok) context.waitUntil?.(cache.put(cacheKey, response.clone()));

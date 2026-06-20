@@ -5,13 +5,13 @@
   "type": "module",
   "scripts": {
     "dev": "node scripts/dev-server.mjs",
-    "build": "tsc --noEmit && node scripts/build.mjs",
+    "build": "tsc --noEmit && tsc --noEmit -p worker/tsconfig.json && tsc --noEmit -p functions/tsconfig.json && node scripts/build.mjs",
     "preview": "node scripts/dev-server.mjs --dist-only",
     "dev:vite": "vite --host 0.0.0.0",
     "build:vite": "vite build",
     "deploy:worker": "npx wrangler deploy --config worker/wrangler.toml",
-    "test": "vitest run",
-    "test:watch": "vitest"
+    "test": "node scripts/test.mjs",
+    "test:watch": "node scripts/test.mjs --watch"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^4.3.4",
@@ -25,11 +25,12 @@
     "vite-plugin-pwa": "^0.21.1"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260620.1",
+    "@rollup/plugin-commonjs": "^28.0.3",
+    "@rollup/plugin-json": "^6.1.0",
     "@types/node": "^22.10.2",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
-    "@rollup/plugin-commonjs": "^28.0.3",
-    "@rollup/plugin-json": "^6.1.0",
     "autoprefixer": "^10.4.20",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.17",
