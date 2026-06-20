@@ -1,17 +1,54 @@
+/// <reference types="@cloudflare/workers-types" />
+
 type Env = {
   AI: {
     run(model: string, input: Record<string, unknown>): Promise<{ response?: string }>;
   };
   ALLOWED_EXTRA_HOSTS?: string;
   CACHE_TTL_SECONDS?: string;
-};
-
-type ExecutionContext = {
-  waitUntil(promise: Promise<unknown>): void;
+  RATE_LIMITER: DurableObjectNamespace;
 };
 
 const baseAllowedHosts = new Set(["www.release.tdnet.info", "release.tdnet.info"]);
-const rateLimit = new Map<string, { count: number; resetAt: number }>();
+
+/**
+ * Durable Object ベースの IP 単位レートリミッタ。
+ * モジュールスコープ Map と異なり、Workers の複数インスタンス間で正しく共有される。
+ * 60秒に30リクエストまで（IP単位）。
+ */
+export class RateLimiterDO {
+  private state: DurableObjectState;
+  private count = 0;
+  private resetAt = 0;
+
+  constructor(state: DurableObjectState) {
+    this.state = state;
+  }
+
+  async fetch(request: Request): Promise<Response> {
+    return this.state.blockConcurrencyWhile(async () => {
+      if (this.resetAt === 0) {
+        const stored = await this.state.storage.get<{ count: number; resetAt: number }>("counter");
+        if (stored) {
+          this.count = stored.count;
+          this.resetAt = stored.resetAt;
+        }
+      }
+      const now = Date.now();
+      if (!this.resetAt || this.resetAt < now) {
+        this.count = 1;
+        this.resetAt = now + 60_000;
+      } else {
+        this.count += 1;
+      }
+      await this.state.storage.put("counter", { count: this.count, resetAt: this.resetAt });
+      const allowed = this.count <= 30;
+      return new Response(JSON.stringify({ allowed, count: this.count, resetAt: this.resetAt }), {
+        headers: { "Content-Type": "application/json" }
+      });
+    });
+  }
+}
 
 function corsHeaders(origin = "*") {
   return {
@@ -56,17 +93,18 @@ function isAllowedUrl(url: URL, env: Env): boolean {
   return allowedHosts(env).has(url.hostname.toLowerCase());
 }
 
-function checkRateLimit(request: Request): boolean {
-  const ip = request.headers.get("CF-Connecting-IP") || "unknown";
-  const now = Date.now();
-  const current = rateLimit.get(ip);
-  if (!current || current.resetAt < now) {
-    rateLimit.set(ip, { count: 1, resetAt: now + 60_000 });
+/** Durable Object ベースのレート制限チェック（複数インスタンス間で正しく共有） */
+async function checkRateLimitDO(request: Request, env: Env): Promise<boolean> {
+  try {
+    const ip = request.headers.get("CF-Connecting-IP") || "unknown";
+    const id = env.RATE_LIMITER.idFromName(ip);
+    const stub = env.RATE_LIMITER.get(id);
+    const resp = await stub.fetch(new Request("https://rate-limiter/check", { method: "POST" }));
+    const data = await resp.json() as { allowed: boolean };
+    return data.allowed;
+  } catch {
     return true;
   }
-  if (current.count >= 30) return false;
-  current.count += 1;
-  return true;
 }
 
 const AI_SYSTEM_PROMPT = `あなたは決算短信（日本企業の四半期・通期決算発表資料）を読むための補助AIです。
@@ -91,7 +129,7 @@ async function handleAiSummarize(request: Request, env: Env): Promise<Response> 
     return new Response(null, { headers: corsHeaders(request.headers.get("Origin") || "*") });
   }
   if (request.method !== "POST") return jsonError("method_not_allowed", 405);
-  if (!checkRateLimit(request)) return jsonError("rate_limited", 429);
+  if (!(await checkRateLimitDO(request, env))) return jsonError("rate_limited", 429);
 
   let body: { text?: string; ticker?: string; companyName?: string; title?: string };
   try {
@@ -134,7 +172,7 @@ ${trimmedText}`;
 async function handleProxy(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
   if (request.method === "OPTIONS") return new Response(null, { headers: corsHeaders(request.headers.get("Origin") || "*") });
   if (!["GET", "POST"].includes(request.method)) return jsonError("method_not_allowed", 405);
-  if (!checkRateLimit(request)) return jsonError("rate_limited", 429);
+  if (!(await checkRateLimitDO(request, env))) return jsonError("rate_limited", 429);
 
   const requestUrl = new URL(request.url);
   const targetRaw = requestUrl.searchParams.get("url");

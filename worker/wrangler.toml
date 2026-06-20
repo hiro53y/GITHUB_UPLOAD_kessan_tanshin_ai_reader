@@ -9,3 +9,13 @@ binding = "AI"
 CACHE_TTL_SECONDS = "300"
 # Optional: comma-separated extra allowed hosts for company IR PDF domains.
 ALLOWED_EXTRA_HOSTS = ""
+
+# Durable Objects: IP単位レートリミッタ
+# 複数インスタンス間で正しく共有される rate limit を実現する。
+[[durable_objects.bindings]]
+name = "RATE_LIMITER"
+class_name = "RateLimiterDO"
+
+[[migrations]]
+tag = "v1"
+new_classes = ["RateLimiterDO"]
