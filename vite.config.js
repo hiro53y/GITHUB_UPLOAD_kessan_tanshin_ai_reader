@@ -89,6 +89,11 @@ export default defineConfig({
     minify: "esbuild",
     sourcemap: false
   },
+  test: {
+    environment: "node",
+    include: ["tests/**/*.test.ts"],
+    globals: false
+  },
   server: {
     proxy: {
       "/tdnet-search": {

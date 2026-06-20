@@ -14,7 +14,8 @@ export async function fetchAiSummary(
   text: string,
   ticker?: string,
   companyName?: string,
-  title?: string
+  title?: string,
+  signal?: AbortSignal
 ): Promise<AiSummaryResult> {
   if (!proxyUrl) {
     return { ok: false, error: "Worker URL が設定されていません" };
@@ -32,7 +33,8 @@ export async function fetchAiSummary(
         ticker,
         companyName,
         title
-      })
+      }),
+      signal
     });
 
     if (!response.ok) {
@@ -47,6 +49,7 @@ export async function fetchAiSummary(
 
     return { ok: true, summary: data.summary };
   } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") throw error;
     const message = error instanceof Error ? error.message : String(error);
     return { ok: false, error: `AI要約リクエストに失敗しました: ${message}` };
   }

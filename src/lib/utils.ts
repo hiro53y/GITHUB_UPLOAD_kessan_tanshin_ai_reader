@@ -94,8 +94,21 @@ function workerProxyUrl(url: string): string | undefined {
   return `${proxyUrl}/?url=${encodeURIComponent(url)}`;
 }
 
+/**
+ * URL に対してアクセス試行順を構築する。
+ * - 本番（PROD）: workerProxy が利用可能ならそれを最優先。CORSの直接アクセスは
+ *   多くのケースで失敗するため、後続フォールバックに回す。worker未設定なら直接のみ。
+ * - 開発（DEV）: 開発体験維持のため direct を先頭、その後 worker / devProxy。
+ */
 function buildAttempts(url: string): string[] {
-  return [url, workerProxyUrl(url), devProxyUrl(url)].filter(Boolean) as string[];
+  const direct = url;
+  const worker = workerProxyUrl(url);
+  const dev = devProxyUrl(url);
+  if (import.meta.env?.PROD) {
+    if (worker) return [worker, direct].filter(Boolean) as string[];
+    return [direct].filter(Boolean) as string[];
+  }
+  return [direct, worker, dev].filter(Boolean) as string[];
 }
 
 export async function fetchTextWithFallback(

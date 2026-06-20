@@ -74,19 +74,23 @@ export const HISTORY_LIMIT = 50;
 export function saveHistoryItem(item: HistoryItem): { ok: boolean; trimmed: boolean; error?: string } {
   const current = listHistory();
   const merged = [item, ...current.filter((entry) => entry.id !== item.id)];
-  let next = merged.slice(0, HISTORY_LIMIT);
-  for (let limit = HISTORY_LIMIT; limit >= 5; limit -= 10) {
+  // 50→40→30→20→10→5 と段階的に減らしてリトライし、最少5件で失敗したら ok:false
+  const tryLimits = [HISTORY_LIMIT, 40, 30, 20, 10, 5];
+  let lastError: unknown;
+  for (const limit of tryLimits) {
+    const next = merged.slice(0, limit);
     try {
       localStorage.setItem(HISTORY_KEY, JSON.stringify(next));
-      return { ok: true, trimmed: merged.length > HISTORY_LIMIT || limit < HISTORY_LIMIT };
+      return { ok: true, trimmed: merged.length > limit };
     } catch (error) {
-      next = next.slice(0, Math.max(5, limit - 10));
-      if (limit <= 5) {
-        return { ok: false, trimmed: true, error: error instanceof Error ? error.message : String(error) };
-      }
+      lastError = error;
     }
   }
-  return { ok: false, trimmed: true };
+  return {
+    ok: false,
+    trimmed: true,
+    error: lastError instanceof Error ? lastError.message : String(lastError ?? "QuotaExceeded")
+  };
 }
 
 export function deleteHistoryItem(id: string): void {

@@ -1,5 +1,6 @@
 import { FileText, WifiOff } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useReducer, useRef } from "react";
+import { appReducer, createInitialAppState, type LastTickerRequest } from "./lib/appReducer";
 import { BottomNav, type NavKey } from "./components/BottomNav";
 import { Card } from "./components/Card";
 import { FetchResultPage } from "./pages/FetchResultPage";
@@ -12,6 +13,7 @@ import { fetchLatestDisclosureByTicker } from "./lib/disclosureFetcher";
 import { extractPdfText } from "./lib/pdfExtract";
 import { buildMarkdownReport } from "./lib/promptBuilder";
 import { analyzeDisclosureText } from "./lib/ruleAnalyzer";
+import { extractXbrlMetrics, type XbrlExtractResult } from "./lib/xbrlExtract";
 import {
   clearHistory,
   deleteHistoryItem,
@@ -45,13 +47,74 @@ function migrateReport(report: AnalysisReport): AnalysisReport {
   return { ...report, freeAiDigest: defaultFreeAiDigest };
 }
 
-type LastTickerRequest = {
-  ticker: string;
-  companyName?: string;
-};
-
 function updateStepList(steps: LoadingStep[], id: number, status: LoadingStep["status"], detail?: string): LoadingStep[] {
   return steps.map((step) => (step.id === id ? { ...step, status, detail } : step));
+}
+
+/** XBRLから抽出した数値で AnalysisReport の主要数値・通期予想を上書きする（PDF解析より優先） */
+function applyXbrlOverridesToReport(report: AnalysisReport, xbrl: XbrlExtractResult): void {
+  const unit = xbrl.unit;
+  const fmtAmount = (raw: string): string => {
+    if (!raw) return "";
+    const cleaned = raw.replace(/[△▲]/g, "-").replace(/,/g, "").trim();
+    const num = Number(cleaned);
+    if (!Number.isFinite(num)) return `${raw}${unit}`;
+    const yen = unit === "百万円" ? num * 1_000_000 : unit === "千円" ? num * 1_000 : num;
+    const abs = Math.abs(yen);
+    if (abs >= 1_000_000_000_000) return `${(yen / 1_000_000_000_000).toLocaleString("ja-JP", { maximumFractionDigits: 2 })}兆円`;
+    if (abs >= 100_000_000) return `${(yen / 100_000_000).toLocaleString("ja-JP", { maximumFractionDigits: 1 })}億円`;
+    if (abs >= 1_000_000) return `${(yen / 1_000_000).toLocaleString("ja-JP", { maximumFractionDigits: 1 })}百万円`;
+    if (abs >= 10_000) return `${(yen / 10_000).toLocaleString("ja-JP", { maximumFractionDigits: 1 })}万円`;
+    return `${yen.toLocaleString("ja-JP")}円`;
+  };
+  const growthPhrase = (g: string): string => {
+    const n = Number(g.replace(/[▲△]/g, "-").replace(/％|%/g, ""));
+    if (!Number.isFinite(n)) return `${g}%`;
+    if (n < 0) return `${Math.abs(n).toFixed(1)}%減`;
+    if (n > 0) return `${n.toFixed(1)}%増`;
+    return "横ばい";
+  };
+  const growthTone = (g: string): "up" | "down" | "flat" | "unknown" => {
+    const n = Number(g.replace(/[▲△]/g, "-").replace(/％|%/g, ""));
+    if (!Number.isFinite(n)) return "unknown";
+    if (n < 0) return "down";
+    if (n > 0) return "up";
+    return "flat";
+  };
+
+  // ラベル単位で既存 keyMetrics に上書きマージ（部分XBRLでPDF結果を失わないため）
+  const mergeRows = (
+    base: typeof report.freeAiDigest.keyMetrics,
+    incoming: typeof report.freeAiDigest.keyMetrics
+  ): typeof report.freeAiDigest.keyMetrics => {
+    if (!incoming.length) return base;
+    const map = new Map(base.map((r) => [r.label, r]));
+    for (const r of incoming) map.set(r.label, r);
+    const order = ["売上高", "営業利益", "経常利益", "純利益"];
+    return [...map.values()].sort((a, b) => order.indexOf(a.label) - order.indexOf(b.label));
+  };
+
+  if (xbrl.performance) {
+    const p = xbrl.performance;
+    const rows = [
+      p.sales ? { label: "売上高", value: fmtAmount(p.sales), growth: growthPhrase(p.salesGrowth), growthTone: growthTone(p.salesGrowth) } : null,
+      p.operatingProfit ? { label: "営業利益", value: fmtAmount(p.operatingProfit), growth: growthPhrase(p.operatingProfitGrowth), growthTone: growthTone(p.operatingProfitGrowth) } : null,
+      p.ordinaryProfit ? { label: "経常利益", value: fmtAmount(p.ordinaryProfit), growth: growthPhrase(p.ordinaryProfitGrowth), growthTone: growthTone(p.ordinaryProfitGrowth) } : null,
+      p.netProfit ? { label: "純利益", value: fmtAmount(p.netProfit), growth: growthPhrase(p.netProfitGrowth), growthTone: growthTone(p.netProfitGrowth) } : null
+    ].filter((r): r is NonNullable<typeof r> => r !== null);
+    report.freeAiDigest.keyMetrics = mergeRows(report.freeAiDigest.keyMetrics, rows);
+  }
+  if (xbrl.forecast) {
+    const f = xbrl.forecast;
+    const rows = [
+      f.sales ? { label: "売上高", value: fmtAmount(f.sales), growth: growthPhrase(f.salesGrowth), growthTone: growthTone(f.salesGrowth) } : null,
+      f.operatingProfit ? { label: "営業利益", value: fmtAmount(f.operatingProfit), growth: growthPhrase(f.operatingProfitGrowth), growthTone: growthTone(f.operatingProfitGrowth) } : null,
+      f.ordinaryProfit ? { label: "経常利益", value: fmtAmount(f.ordinaryProfit), growth: growthPhrase(f.ordinaryProfitGrowth), growthTone: growthTone(f.ordinaryProfitGrowth) } : null,
+      f.netProfit ? { label: "純利益", value: fmtAmount(f.netProfit), growth: growthPhrase(f.netProfitGrowth), growthTone: growthTone(f.netProfitGrowth) } : null
+    ].filter((r): r is NonNullable<typeof r> => r !== null);
+    report.freeAiDigest.forecastMetrics = mergeRows(report.freeAiDigest.forecastMetrics, rows);
+  }
+  report.freeAiDigest.method = `${report.freeAiDigest.method} + XBRL直接抽出`;
 }
 
 function makeManualDisclosure(input: { url?: string; fileName?: string; ticker?: string; companyName?: string }): DisclosureItem {
@@ -69,21 +132,49 @@ function makeManualDisclosure(input: { url?: string; fileName?: string; ticker?:
 }
 
 export default function App() {
-  const [active, setActive] = useState<NavKey>("home");
-  const [settings, setSettings] = useState(getSettings);
-  const [history, setHistory] = useState<HistoryItem[]>(listHistory);
-  const [historyFilter, setHistoryFilter] = useState<"all" | "success" | "warning">("all");
-  const [fetchResult, setFetchResult] = useState<DisclosureFetchResult | undefined>();
-  const [selectedDisclosure, setSelectedDisclosure] = useState<DisclosureItem | undefined>();
-  const [report, setReport] = useState<AnalysisReport | undefined>();
-  const [pdfWarnings, setPdfWarnings] = useState<string[]>([]);
-  const [steps, setSteps] = useState<LoadingStep[]>(createInitialSteps());
-  const [logs, setLogs] = useState<string[]>([]);
-  const [processing, setProcessing] = useState(false);
-  const [toast, setToast] = useState("");
-  const [detailReport, setDetailReport] = useState(false);
-  const [lastTickerRequest, setLastTickerRequest] = useState<LastTickerRequest | undefined>();
-  const [isOnline, setIsOnline] = useState<boolean>(typeof navigator === "undefined" ? true : navigator.onLine);
+  // useReducer による集中ステート管理。setter は既存ロジック互換のため shim 関数で残す。
+  const [state, dispatch] = useReducer(
+    appReducer,
+    undefined,
+    () => createInitialAppState(getSettings(), listHistory(), createInitialSteps())
+  );
+  const stateRef = useRef(state);
+  stateRef.current = state;
+
+  const {
+    active, settings, history, historyFilter, fetchResult,
+    selectedDisclosure, report, pdfWarnings, steps, logs,
+    processing, toast, detailReport, lastTickerRequest, isOnline
+  } = state;
+
+  const setActive = (v: NavKey) => dispatch({ type: "SET_ACTIVE", payload: v });
+  const setSettings = (v: typeof settings) => dispatch({ type: "SET_SETTINGS", payload: v });
+  const setHistory = (v: HistoryItem[]) => dispatch({ type: "SET_HISTORY", payload: v });
+  const setHistoryFilter = (v: "all" | "success" | "warning") => dispatch({ type: "SET_HISTORY_FILTER", payload: v });
+  type FRUpdater = DisclosureFetchResult | undefined | ((c: DisclosureFetchResult | undefined) => DisclosureFetchResult | undefined);
+  const setFetchResult = (v: FRUpdater) => {
+    if (typeof v === "function") dispatch({ type: "UPDATE_FETCH_RESULT", payload: v });
+    else dispatch({ type: "SET_FETCH_RESULT", payload: v });
+  };
+  const setSelectedDisclosure = (v: DisclosureItem | undefined) => dispatch({ type: "SET_SELECTED_DISCLOSURE", payload: v });
+  const setReport = (v: AnalysisReport | undefined) => dispatch({ type: "SET_REPORT", payload: v });
+  const setPdfWarnings = (v: string[]) => dispatch({ type: "SET_PDF_WARNINGS", payload: v });
+  type StepsUpdater = LoadingStep[] | ((c: LoadingStep[]) => LoadingStep[]);
+  const setSteps = (v: StepsUpdater) => {
+    if (typeof v === "function") dispatch({ type: "UPDATE_STEPS", payload: v });
+    else dispatch({ type: "SET_STEPS", payload: v });
+  };
+  type LogsUpdater = string[] | ((c: string[]) => string[]);
+  const setLogs = (v: LogsUpdater) => {
+    const next = typeof v === "function" ? v(stateRef.current.logs) : v;
+    dispatch({ type: "SET_LOGS", payload: next });
+  };
+  const setProcessing = (v: boolean) => dispatch({ type: "SET_PROCESSING", payload: v });
+  const setToast = (v: string) => dispatch({ type: "SET_TOAST", payload: v });
+  const setDetailReport = (v: boolean) => dispatch({ type: "SET_DETAIL_REPORT", payload: v });
+  const setLastTickerRequest = (v: LastTickerRequest | undefined) => dispatch({ type: "SET_LAST_TICKER_REQUEST", payload: v });
+  const setIsOnline = (v: boolean) => dispatch({ type: "SET_ONLINE", payload: v });
+
   const abortRef = useRef<AbortController | null>(null);
   const notifyTimerRef = useRef<number | null>(null);
 
@@ -95,6 +186,18 @@ export default function App() {
     return () => {
       window.removeEventListener("online", handleOnline);
       window.removeEventListener("offline", handleOffline);
+    };
+  }, []);
+
+  // アンマウント時に進行中のタイマー・非同期処理をクリーンアップ
+  useEffect(() => {
+    return () => {
+      if (notifyTimerRef.current !== null) {
+        window.clearTimeout(notifyTimerRef.current);
+        notifyTimerRef.current = null;
+      }
+      abortRef.current?.abort();
+      abortRef.current = null;
     };
   }, []);
 
@@ -201,6 +304,23 @@ export default function App() {
       });
       setStep(6, "success", "重要語句検出完了");
 
+      // XBRL が利用可能なら数値部分を上書き（PDF抽出より精度が高い）
+      if (disclosure.xbrlUrl) {
+        try {
+          addLog("XBRLから業績数値を抽出中…");
+          const xbrl = await extractXbrlMetrics(disclosure.xbrlUrl, effectiveSignal);
+          if (xbrl.ok) {
+            applyXbrlOverridesToReport(nextReport, xbrl);
+            addLog(`XBRL抽出成功（単位: ${xbrl.unit}）`);
+          } else if (xbrl.error) {
+            addLog(`XBRL抽出失敗（PDF解析を採用）: ${xbrl.error}`);
+          }
+        } catch (xbrlError) {
+          if (xbrlError instanceof DOMException && xbrlError.name === "AbortError") throw xbrlError;
+          addLog(`XBRL取得エラー: ${xbrlError instanceof Error ? xbrlError.message : String(xbrlError)}`);
+        }
+      }
+
       // step 7: AI要約（有効かつWorker URL設定済みのときのみ実行）
       if (settings.aiSummaryEnabled && settings.proxyUrl) {
         setStep(7, "processing", "AI要約を生成中");
@@ -210,7 +330,8 @@ export default function App() {
           pdf.rawText,
           nextReport.ticker,
           nextReport.companyName,
-          disclosure.title
+          disclosure.title,
+          effectiveSignal
         );
         if (aiResult.ok && aiResult.summary) {
           nextReport.aiSummary = aiResult.summary;

@@ -175,15 +175,18 @@ function getGrowthRate(facts: FactEntry[], kind: ContextKind, group: keyof typeo
   return entry.value;
 }
 
-function findSummaryXbrl(entries: Record<string, Uint8Array>): { name: string; data: Uint8Array } | undefined {
+type SourceFile = { name: string; data: Uint8Array; kind: "xbrl" | "ixbrl" };
+
+function findSourceFile(entries: Record<string, Uint8Array>): SourceFile | undefined {
   const xbrlFiles = Object.entries(entries).filter(([name]) => /\.xbrl$/i.test(name));
-  if (!xbrlFiles.length) {
-    const ixbrl = Object.entries(entries).find(([name]) => /Summary\/.+\.htm/i.test(name));
-    return ixbrl ? { name: ixbrl[0], data: ixbrl[1] } : undefined;
+  if (xbrlFiles.length) {
+    const summary = xbrlFiles.find(([name]) => /Summary/i.test(name));
+    const target = summary || xbrlFiles[0];
+    return { name: target[0], data: target[1], kind: "xbrl" };
   }
-  const summary = xbrlFiles.find(([name]) => /Summary/i.test(name));
-  const target = summary || xbrlFiles[0];
-  return { name: target[0], data: target[1] };
+  const ixbrl = Object.entries(entries).find(([name]) => /Summary\/.*ixbrl.*\.htm/i.test(name)) ||
+                Object.entries(entries).find(([name]) => /Summary\/.+\.htm/i.test(name));
+  return ixbrl ? { name: ixbrl[0], data: ixbrl[1], kind: "ixbrl" } : undefined;
 }
 
 function parseFacts(xmlText: string): FactEntry[] {
@@ -198,6 +201,40 @@ function parseFacts(xmlText: string): FactEntry[] {
   });
   const obj = parser.parse(xmlText);
   return collectFacts(obj);
+}
+
+/**
+ * inline XBRL (iXBRL) HTML から ix:nonFraction / ix:nonNumeric の値を抽出する。
+ */
+function parseIxbrlFacts(htmlText: string): FactEntry[] {
+  const facts: FactEntry[] = [];
+  const tagRe = /<(?:ix:)?(nonFraction|nonNumeric)\b([^>]*)>([\s\S]*?)<\/(?:ix:)?\1>/gi;
+  for (const match of htmlText.matchAll(tagRe)) {
+    const attrs = match[2];
+    const inner = match[3].replace(/<[^>]*>/g, "").trim();
+    const nameMatch = attrs.match(/\bname\s*=\s*["']([^"']+)["']/);
+    const ctxMatch = attrs.match(/\bcontextRef\s*=\s*["']([^"']+)["']/);
+    const unitMatch = attrs.match(/\bunitRef\s*=\s*["']([^"']+)["']/);
+    const decMatch = attrs.match(/\bdecimals\s*=\s*["']([^"']+)["']/);
+    const scaleMatch = attrs.match(/\bscale\s*=\s*["']([^"']+)["']/);
+    const signMatch = attrs.match(/\bsign\s*=\s*["']([^"']+)["']/);
+    if (!nameMatch || !ctxMatch || !inner) continue;
+    let value = inner.replace(/,/g, "");
+    const scaleN = scaleMatch ? Number(scaleMatch[1]) : 0;
+    if (Number.isFinite(scaleN) && scaleN !== 0) {
+      const num = Number(value);
+      if (Number.isFinite(num)) value = String(num * Math.pow(10, scaleN));
+    }
+    if (signMatch?.[1] === "-") value = `-${value}`;
+    facts.push({
+      element: localName(nameMatch[1]),
+      contextRef: ctxMatch[1],
+      unitRef: unitMatch?.[1],
+      decimals: decMatch?.[1],
+      value
+    });
+  }
+  return facts;
 }
 
 /**
