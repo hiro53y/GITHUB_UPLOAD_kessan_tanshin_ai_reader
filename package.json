@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "node scripts/dev-server.mjs",
-    "build": "node scripts/build.mjs",
+    "build": "vite build",
+    "build:legacy": "node scripts/build.mjs",
     "typecheck": "tsc --noEmit && tsc --noEmit -p worker/tsconfig.json && tsc --noEmit -p functions/tsconfig.json",
     "preview": "node scripts/dev-server.mjs --dist-only",
     "dev:vite": "vite --host 0.0.0.0",
@@ -35,7 +36,4 @@
     "autoprefixer": "^10.4.20",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.17",
-    "typescript": "^5.7.2",
-    "vitest": "^2.1.8"
-  }
-}
+    "typescript": "^5.7
