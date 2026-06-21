@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "node scripts/dev-server.mjs",
-    "build": "tsc --noEmit && tsc --noEmit -p worker/tsconfig.json && tsc --noEmit -p functions/tsconfig.json && node scripts/build.mjs",
+    "build": "node scripts/build.mjs",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p worker/tsconfig.json && tsc --noEmit -p functions/tsconfig.json",
     "preview": "node scripts/dev-server.mjs --dist-only",
     "dev:vite": "vite --host 0.0.0.0",
     "build:vite": "vite build",
