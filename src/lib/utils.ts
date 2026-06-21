@@ -94,21 +94,32 @@ function workerProxyUrl(url: string): string | undefined {
   return `${proxyUrl}/?url=${encodeURIComponent(url)}`;
 }
 
+/** 同一オリジン Cloudflare Pages Functions プロキシ（追加設定不要） */
+function pagesProxyUrl(url: string): string {
+  return `/api/proxy?url=${encodeURIComponent(url)}`;
+}
+
+/** 公開CORSプロキシ（最終フォールバック、Pages Functions/Worker が未稼働でも動かすため） */
+function publicCorsProxyUrl(url: string): string {
+  return `https://corsproxy.io/?${encodeURIComponent(url)}`;
+}
+
 /**
  * URL に対してアクセス試行順を構築する。
- * - 本番（PROD）: workerProxy が利用可能ならそれを最優先。CORSの直接アクセスは
- *   多くのケースで失敗するため、後続フォールバックに回す。worker未設定なら直接のみ。
+ * - 本番（PROD）: 設定済みWorker → 同一オリジンPagesFunction → 公開CORSプロキシ → 直接アクセス
+ *   いずれかが動けば取得成功する設計。
  * - 開発（DEV）: 開発体験維持のため direct を先頭、その後 worker / devProxy。
  */
 function buildAttempts(url: string): string[] {
   const direct = url;
   const worker = workerProxyUrl(url);
+  const pages = pagesProxyUrl(url);
+  const publicProxy = publicCorsProxyUrl(url);
   const dev = devProxyUrl(url);
   if (import.meta.env?.PROD) {
-    if (worker) return [worker, direct].filter(Boolean) as string[];
-    return [direct].filter(Boolean) as string[];
+    return Array.from(new Set([worker, pages, publicProxy, direct].filter(Boolean))) as string[];
   }
-  return [direct, worker, dev].filter(Boolean) as string[];
+  return Array.from(new Set([direct, worker, dev].filter(Boolean))) as string[];
 }
 
 export async function fetchTextWithFallback(
