@@ -9,3 +9,6 @@ out/
 .env.local
 .env.*.local
 *.log
+# package-lock.json はCI環境とローカル環境のnode/npmバージョン差で生成内容がズレやすく、
+# Cloudflare Pages の npm ci でビルド失敗の原因になりやすいため当面コミットしない。
+package-lock.json
