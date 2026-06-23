@@ -88,12 +88,21 @@ export async function onRequest(context: ProxyContext): Promise<Response> {
     const headers = new Headers();
     const contentType = request.headers.get("content-type");
     if (contentType) headers.set("Content-Type", contentType);
-    headers.set("User-Agent", "kessan-tanshin-ai-reader/1.0");
+    // 一般的なブラウザ User-Agent を装う（TDnet/JPXが独自UAを拒否するケースに対応）
+    headers.set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
+    headers.set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
+    headers.set("Accept-Language", "ja,en;q=0.9");
+    // TDnet/JPX が Referer をチェックするケースに備えて同一オリジンを設定
+    headers.set("Referer", `${target.protocol}//${target.host}/`);
+
+    // POST body は ReadableStream のままだとランタイムによって転送失敗するため、
+    // 一度文字列化してから upstream に渡す（小さなフォーム送信のみを想定）
+    const bodyText = request.method === "POST" ? await request.text() : undefined;
 
     const upstream = await fetch(target.toString(), {
       method: request.method,
       headers,
-      body: request.method === "POST" ? request.body : undefined,
+      body: bodyText,
       cf: request.method === "GET" ? { cacheTtl: 300, cacheEverything: true } : undefined
     } as RequestInit);
 
