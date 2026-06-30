@@ -28,6 +28,7 @@ export function classifyDocumentTitle(title: string): DisclosureDocumentType {
   if (/決算短信|四半期決算短信|通期決算短信/.test(title)) return "earnings_release";
   if (/決算説明資料|決算補足説明資料/.test(title)) return "earnings_presentation";
   if (/業績予想の修正|通期業績予想の修正|業績予想|通期業績予想/.test(title)) return "forecast_revision";
+  // 配当系：単純な「配当」マッチを避けて、修正/予想/方針に関わる文書のみを分類
   if (/配当予想の修正|配当予想|期末配当|中間配当|剰余金の配当|配当方針|配当性向|株主還元/.test(title)) return "dividend_revision";
   return "other";
 }

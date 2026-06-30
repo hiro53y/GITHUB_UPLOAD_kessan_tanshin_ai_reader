@@ -1,5 +1,17 @@
 # 判断記録
 
+## 2026-06-25
+
+- 最新決算のJPX履歴検索は最低120日とする。理由: 30日設定が保存されていると、5451（ヨドコウ）の2026年5月11日公表資料が2026年6月25日時点で期間外となり、公開資料が存在しても0件になるため。
+- 既存成果物は上書きせず、修正版を `deliverables/GITHUB_UPLOAD_kessan_tanshin_ai_reader_20260625_5451_FIX/` に新規作成する。
+
+## 2026-06-20
+
+- TDnet検索で決算関連資料が無い場合は、公式JPX「東証上場会社情報サービス」の会社別開示履歴を利用する。理由: TDnet検索画面の公開期間内に直近決算が無い銘柄でも、銘柄コードから最新決算短信を取得できるようにするため。
+- Cloudflare Pagesでは同梱の `/api/proxy` と `/api/disclosures` を既定経路として自動利用する。理由: Worker URL未設定の公開版でブラウザのCORS制限により全検索が失敗する状態をなくすため。
+- `documentType === "other"` の資料は自動選定しない。理由: 役員人事などを「最新決算関連資料」と誤判定するのを防ぐため。
+- 既存成果物は上書きせず、修正版を `deliverables/GITHUB_UPLOAD_kessan_tanshin_ai_reader_20260620/` に新規作成する。
+
 ## 2026-05-09
 
 - MVPでは外部LLM APIを実装しない。理由: ユーザー要件で外部AI APIの使用とAPIキー入力欄が禁止されているため。
@@ -11,10 +23,4 @@
 - 独自ビルドに `process.env.NODE_ENV` / `import.meta.env` 置換を追加した。理由: Vite CLIを使わないビルドでは置換が自動で行われず、ブラウザ実行時にクラッシュする可能性があったため。
 - GitHubアップロード対象は `deliverables/GITHUB_UPLOAD_kessan_tanshin_ai_reader/` の1フォルダにした。理由: ユーザー要件として、`deliverables/` 直下の1フォルダをGitHubへアップロードすればCloudflare Pagesで使える形が求められたため。`node_modules/`、`dist/`、`out/` は含めない。
 - ビルドスクリプトから `@rollup/plugin-node-resolve` への直接importを外し、Node標準の `require.resolve` を使う軽量resolverへ置き換えた。あわせて `.node-version` / `.nvmrc` でNode.js 20系を指定した。理由: 推移依存だけに頼る直接importはCloudflareのクリーン環境で解決できない可能性があったため。
-- Cloudflare Pages Functionsの `/api/proxy` を追加し、PDF URL取得とTDnet取得のfallbackに入れた。理由: GitHub + Cloudflare Pages公開時に、別Worker URLを設定しなくても同一オリジンproxyでCORS失敗を回避しやすくするため。
-- 無料AI要約は外部LLM APIではなく端末内の抽出型要約として実装した。理由: ユーザーは無料AI機能を求めている一方、外部LLM APIやAPIキー欄は実装しない方針が維持されているため。
-- Service Workerのcache名を更新し、旧cache削除とassetsのnetwork-first取得を追加した。理由: PWAが古い `/assets/app.js` をcache優先で返し、修正後も画面が変わらない状態を避けるため。
-- JS/CSSの出力ファイル名を `app-20260509-3.js` / `index-20260509-3.css` に変更した。理由: 固定名 `/assets/app.js` がブラウザやCloudflare側で残っても、新しいHTMLが別ファイルを読むようにするため。
-- 2026-05-09.4で無料AI要約を、業績診断、良い点、注意点、主要数値、項目別要約に拡張した。理由: キーワード検出の有無ではなく、決算内容の要点を読みたいというユーザー要望に合わせるため。
-- Pages proxyはGETかつHTTPSの `.pdf` URLを許可対象に追加した。理由: 企業IRなどTDnet以外のPDF URL貼り付けでもCORS回避できるようにするため。HTML等の任意URL proxyは許可しない。
-- 2026-05-09.5で決算短信の定型業績表を直接解析するようにした。理由: キーワード周辺文だけでは「何が書かれているか」「決算が良いのか悪いのか」が弱く、売上高・営業利益・経常利益・純利益の前年差を優先した方が利用価値が高いため。
+- OneDrive配下で `.git/index.lock` と `.git/objects` の作成が拒否されたため、GitHubアップロード用の修正版クリーンフォルダを `deliverables/GITHUB_UPLOAD_kessan_tanshin_ai_reader_FIXED/` に作成した。理由: Git操作に依存せず、フォルダ単位でGitHubへ再アップロードできる状態にするため。

@@ -90,6 +90,7 @@ function applyXbrlOverridesToReport(report: AnalysisReport, xbrl: XbrlExtractRes
     if (!incoming.length) return base;
     const map = new Map(base.map((r) => [r.label, r]));
     for (const r of incoming) map.set(r.label, r);
+    // 順序：売上高 → 営業利益 → 経常利益 → 純利益 を優先
     const order = ["売上高", "営業利益", "経常利益", "純利益"];
     return [...map.values()].sort((a, b) => order.indexOf(a.label) - order.indexOf(b.label));
   };
@@ -178,29 +179,6 @@ export default function App() {
   const abortRef = useRef<AbortController | null>(null);
   const notifyTimerRef = useRef<number | null>(null);
 
-  useEffect(() => {
-    const handleOnline = () => setIsOnline(true);
-    const handleOffline = () => setIsOnline(false);
-    window.addEventListener("online", handleOnline);
-    window.addEventListener("offline", handleOffline);
-    return () => {
-      window.removeEventListener("online", handleOnline);
-      window.removeEventListener("offline", handleOffline);
-    };
-  }, []);
-
-  // アンマウント時に進行中のタイマー・非同期処理をクリーンアップ
-  useEffect(() => {
-    return () => {
-      if (notifyTimerRef.current !== null) {
-        window.clearTimeout(notifyTimerRef.current);
-        notifyTimerRef.current = null;
-      }
-      abortRef.current?.abort();
-      abortRef.current = null;
-    };
-  }, []);
-
   function startAbortController(): AbortSignal {
     abortRef.current?.abort();
     const controller = new AbortController();
@@ -222,6 +200,29 @@ export default function App() {
     );
     notify("処理を中断しました");
   }
+
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+    };
+  }, []);
+
+  // アンマウント時に進行中のタイマー・非同期処理をクリーンアップ（StrictMode 二重マウント対応）
+  useEffect(() => {
+    return () => {
+      if (notifyTimerRef.current !== null) {
+        window.clearTimeout(notifyTimerRef.current);
+        notifyTimerRef.current = null;
+      }
+      abortRef.current?.abort();
+      abortRef.current = null;
+    };
+  }, []);
 
   const latestHistory = history[0];
   const storageSize = useMemo(() => estimateStorageSize(), [history, settings]);
@@ -283,7 +284,7 @@ export default function App() {
 
   async function runPdfAnalysis(input: File | string, disclosure: DisclosureItem, sourceFetchResult?: DisclosureFetchResult, signal?: AbortSignal) {
     const effectiveSignal = signal ?? startAbortController();
-    const ownerController = abortRef.current;
+    const ownerController = abortRef.current; // この処理のcontrollerを記憶。新規開始でabortRefが差し替わった場合は finally で setProcessing(false) しない。
     try {
       setProcessing(true);
       setStep(4, input instanceof File ? "success" : "processing", input instanceof File ? "手動PDFを使用" : "PDFを取得中");
@@ -354,7 +355,7 @@ export default function App() {
       notify("分析レポートを生成しました");
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") {
-        return;
+        return; // 中断はキャンセル処理側で UI 更新済み
       }
       const message = error instanceof Error ? error.message : String(error);
       setStep(4, "failed", "PDF取得または解析に失敗");
@@ -381,6 +382,7 @@ export default function App() {
       setActive("fetch");
       notify("PDF取得または解析に失敗しました");
     } finally {
+      // 同じ処理が他の新規開始に取って代わられていなければ processing を解除する。
       if (abortRef.current === ownerController) {
         setProcessing(false);
       }
@@ -423,8 +425,8 @@ export default function App() {
 
     try {
       setStep(1, "success", ticker);
-      setStep(2, "processing", "TDnet公開検索を実行中");
-      addLog("TDnet公開ページ検索を開始しました");
+      setStep(2, "processing", "TDnet・JPX開示検索を実行中");
+      addLog("TDnet・JPX開示検索を開始しました");
       const result = await fetchLatestDisclosureByTicker({ ticker, companyName, lookbackDays: settings.lookbackDays, forceRefresh, signal: tickerSignal });
       setFetchResult(result);
 

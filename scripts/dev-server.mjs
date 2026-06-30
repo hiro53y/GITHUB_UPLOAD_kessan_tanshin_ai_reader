@@ -2,6 +2,7 @@ import { createServer } from "node:http";
 import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import ts from "typescript";
 import { buildApp } from "./build.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -9,6 +10,7 @@ const root = path.resolve(__dirname, "..");
 const dist = path.join(root, "dist");
 const distOnly = process.argv.includes("--dist-only");
 const smoke = process.argv.includes("--smoke");
+let jpxLookupModulePromise;
 
 const mime = {
   ".html": "text/html; charset=utf-8",
@@ -29,21 +31,21 @@ async function proxyTdnet(req, res) {
   } else if (requestUrl.pathname.startsWith("/tdnet/")) {
     target = `https://www.release.tdnet.info${requestUrl.pathname.replace(/^\/tdnet/, "")}${requestUrl.search}`;
   } else if (requestUrl.pathname === "/api/proxy") {
-    const targetParam = requestUrl.searchParams.get("url");
-    if (!targetParam) {
-      res.writeHead(400, { "Content-Type": "application/json; charset=utf-8", "Access-Control-Allow-Origin": "*" });
+    const rawTarget = requestUrl.searchParams.get("url");
+    if (!rawTarget) {
+      res.writeHead(400, { "Content-Type": "application/json; charset=utf-8" });
       res.end(JSON.stringify({ error: "missing_url" }));
       return true;
     }
-    const parsed = new URL(targetParam);
-    const allowed = ["www.release.tdnet.info", "release.tdnet.info"].includes(parsed.hostname) ||
-      (req.method === "GET" && parsed.protocol === "https:" && parsed.pathname.toLowerCase().endsWith(".pdf"));
-    if (!allowed) {
-      res.writeHead(403, { "Content-Type": "application/json; charset=utf-8", "Access-Control-Allow-Origin": "*" });
+    const parsedTarget = new URL(rawTarget);
+    const allowedHost = ["www.release.tdnet.info", "release.tdnet.info", "www2.jpx.co.jp"].includes(parsedTarget.hostname);
+    const allowedPdf = req.method === "GET" && parsedTarget.protocol === "https:" && parsedTarget.pathname.toLowerCase().endsWith(".pdf");
+    if (!allowedHost && !allowedPdf) {
+      res.writeHead(403, { "Content-Type": "application/json; charset=utf-8" });
       res.end(JSON.stringify({ error: "host_not_allowed" }));
       return true;
     }
-    target = parsed.toString();
+    target = parsedTarget.toString();
   } else {
     return false;
   }
@@ -68,7 +70,52 @@ async function proxyTdnet(req, res) {
   return true;
 }
 
+async function getJpxLookupModule() {
+  if (!jpxLookupModulePromise) {
+    jpxLookupModulePromise = readFile(path.join(root, "functions", "lib", "jpxDisclosures.ts"), "utf8").then((source) => {
+      const output = ts.transpileModule(source, {
+        compilerOptions: {
+          target: ts.ScriptTarget.ES2020,
+          module: ts.ModuleKind.ESNext
+        }
+      }).outputText;
+      return import(`data:text/javascript;base64,${Buffer.from(output).toString("base64")}`);
+    });
+  }
+  return jpxLookupModulePromise;
+}
+
+async function serveJpxDisclosures(req, res) {
+  const requestUrl = new URL(req.url || "/", "http://localhost");
+  if (requestUrl.pathname !== "/api/disclosures") return false;
+  if (req.method !== "GET") {
+    res.writeHead(405, { "Content-Type": "application/json; charset=utf-8" });
+    res.end(JSON.stringify({ ok: false, error: "method_not_allowed" }));
+    return true;
+  }
+
+  const ticker = (requestUrl.searchParams.get("ticker") || "").trim();
+  const lookbackDays = Number(requestUrl.searchParams.get("lookbackDays") || "120");
+  if (!/^\d{4}$/.test(ticker) || !Number.isFinite(lookbackDays)) {
+    res.writeHead(400, { "Content-Type": "application/json; charset=utf-8" });
+    res.end(JSON.stringify({ ok: false, error: "invalid_request" }));
+    return true;
+  }
+
+  try {
+    const { lookupJpxDisclosures } = await getJpxLookupModule();
+    const result = await lookupJpxDisclosures({ ticker, lookbackDays });
+    res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+    res.end(JSON.stringify({ ok: true, ...result }));
+  } catch (error) {
+    res.writeHead(502, { "Content-Type": "application/json; charset=utf-8" });
+    res.end(JSON.stringify({ ok: false, error: "jpx_lookup_failed", message: error instanceof Error ? error.message : String(error) }));
+  }
+  return true;
+}
+
 async function serveFile(req, res) {
+  if (await serveJpxDisclosures(req, res)) return;
   if (await proxyTdnet(req, res)) return;
   const requestUrl = new URL(req.url || "/", "http://localhost");
   let filePath = path.normalize(path.join(dist, decodeURIComponent(requestUrl.pathname)));

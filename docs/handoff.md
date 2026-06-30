@@ -2,49 +2,60 @@
 
 ## 現在の状況
 
-決算短信AIリーダーMVPを実装済み。`npm run build` は成功。`npm run dev -- --smoke` と開発サーバーのHTTP 200を確認済み。
+決算短信AIリーダーMVPを実装済み。2026-06-25に5451の短期検索漏れを修正。
 
-GitHubへアップロードする対象は `deliverables/GITHUB_UPLOAD_kessan_tanshin_ai_reader/` の1フォルダ。Cloudflare Pagesではこのフォルダ内容をリポジトリルートとして扱い、Build commandを `npm run build`、Build output directoryを `dist` にする。
+GitHubへアップロードする対象は `deliverables/GITHUB_UPLOAD_kessan_tanshin_ai_reader_20260625_5451_FIX/` の1フォルダ。Cloudflare Pagesではこのフォルダ内容をリポジトリルートとして扱い、Build commandを `npm run build`、Build output directoryを `dist` にする。
 
-## 主な変更
+## 主な変更（2026-06-25）
+
+- 検索期間30日では5451（ヨドコウ）の2026年5月11日公表決算が期間外になる問題を再現。
+- 最新決算のJPX履歴検索を最低120日へ自動拡張するよう修正。
+- 5451の回帰テストを追加し、ヨドコウの「2026年3月期 決算短信〔日本基準〕（連結）」を取得対象として確認。
+- JPXフォールバックが欠落していた旧成果物フォルダは使用せず、新しいGitHubアップロード用フォルダを作成。
+- クリーンな一時環境で `npm test`（18件）、`npm run typecheck`、`npm run build`、`npm run dev -- --smoke` が成功。
+- ローカルAPI経由で5451の決算短信PDF（HTTP 200 / `%PDF-1.4`）まで取得できることを確認。
+
+## 主な変更（2026-06-20）
+
+- 公開版が同梱Pages Functionを使わず、Worker URL未設定時にTDnetのCORSで全検索が失敗し得る問題を修正。
+- TDnet検索期間内に決算資料が無い場合、公式JPX「東証上場会社情報サービス」の会社別開示履歴を検索するフォールバックを追加。
+- 役員人事など `other` 文書を最新決算として自動選定しないよう修正。
+- `functions/api/proxy.ts`、`functions/api/disclosures.ts`、`worker/src/jpxDisclosures.ts` を追加し、Pages/外部Worker/ローカル開発で同じ取得フローを利用。
+- `7203` の実取得で、トヨタ自動車の「2026年3月期 決算短信〔IFRS〕（連結）」（2026/05/08）を確認。
+- クリーンな一時環境で `npm test`（17件）、`npm run build`、`npm run dev -- --smoke` が成功。
+- ローカル画面の自動操作はブラウザ側の既存セキュリティ制限で拒否されたため、API応答・単体テスト・ビルド・起動で検証。
+
+## 主な変更（2026-05-10）
+
+- **要約品質を全面刷新**：決算サマリー・無料AI診断が生テキストを転記する問題を修正。キーワード名・構造化データだけを使って箇条書き要約を生成するよう変更。
+- `src/lib/types.ts`：`FreeAiDigest`型・`FreeAiVerdict`型を追加。`AnalysisReport`に`freeAiDigest`フィールドを追加。
+- `src/lib/ruleAnalyzer.ts`：`topicComment()`・`buildSummary()`・`buildFreeAiDigest()`を完全書き直し。excerptAround()由来の生テキストを排除。
+- `src/lib/promptBuilder.ts`：`buildMarkdownReport()`をfreeAiDigest構造データ対応に更新。
+- `src/pages/ReportPage.tsx`：「無料AI診断・要点」カードを新設（判定バッジ・主要数値・良い点/注意点・トピック別サマリー）。
+- `src/App.tsx`：旧localStorage履歴データ（freeAiDigest未保有）の後方互換マイグレーション関数を追加。
+- `dist/`再ビルド → `deliverables/GITHUB_UPLOAD_kessan_tanshin_ai_reader/dist/` に反映済み。
+
+## 以前の変更
 
 - React/TypeScript/Tailwind/PWA基盤を追加
 - TDnet公開検索、候補スコアリング、PDF抽出、標準ルール分析を追加
 - ホーム、取得中、取得結果、レポート、履歴、設定画面を追加
 - 手動PDFアップロード、PDF URL分析、履歴保存を追加
 - Cloudflare Workers proxyサンプルを追加
-- README、AGENTS、TASKS、仕様、判断記録、テストチェックリストを更新
-- `deliverables/GITHUB_UPLOAD_kessan_tanshin_ai_reader/` にGitHubアップロード用の単一フォルダを作成
-- GitHubアップロード用フォルダ側でTypeScriptチェックを確認
+- `deliverables/GITHUB_UPLOAD_kessan_tanshin_ai_reader/` にGitHubアップロード用フォルダ作成済み
 - Cloudflare Pages用 `_headers` / `_redirects` と Workers proxy用 `worker/wrangler.toml` を追加
-- 独自ビルドのブラウザ実行時クラッシュ要因だった `process.env.NODE_ENV` / `import.meta.env` の残存を修正
-- Cloudflareクリーン環境向けにビルドスクリプトの未宣言依存を外し、Node.js 20指定の `.node-version` / `.nvmrc` を追加
-- Cloudflare Pages Functionsの同一オリジンproxy `functions/api/proxy.ts` を追加
-- PDF URL取得とTDnet取得のfallback順を、開発proxy、Pages proxy、Worker proxy、直接取得の順に変更
-- レポートの確認誘導文言を「根拠ページ・読みどころ」に変更
-- 外部APIなしの無料AI要約カードを追加
-- Yahoo!ファイナンスの銘柄コード検索リンクをホームに追加
-- PWAのService Worker cacheを更新し、古い画面が残る問題を修正
-- JS/CSSをバージョン付きファイル名に変更し、ホーム先頭に「改修版 2026-05-09.3」カードを追加
-- 2026-05-09.4で、ホーム先頭を「要約強化版」に更新し、無料AI診断の表示内容を業績診断・良い点・注意点・主要数値中心に変更
-- PDF URL貼り付けはTDnet以外でも、HTTPSかつ `.pdf` のURLならPages proxyを通すように変更
-- 2026-05-09.5で、決算短信1ページ目の業績表を優先解析し、売上高・営業利益・経常利益・純利益の前年差、通期予想、配当予想を自然文で要約するように変更
 
 ## 未完了
 
 - 実機Android Chromeでのホーム画面追加確認
 - 本番HTTPSホスティングへの配置
-- Cloudflare Pages Functions proxyの実Cloudflare環境での動作確認
-- Cloudflare Workers proxyの実Cloudflare環境でのデプロイ確認
+- Cloudflare Pages Functions / Workers proxyの実Cloudflare環境でのデプロイ確認
 - TDnet構造変更時の継続メンテナンス
 
 ## 注意点
 
 - TDnet公開閲覧は掲載期間とCORSに依存するため、取得失敗は正常ケース。
-- 外部LLM APIは未実装。APIキー入力欄もない。無料AI要約は端末内の抽出型要約。
-- ブラウザ視覚確認はセキュリティポリシーで拒否されたため、HTTP応答、TDnet proxy、ビルド成果物、実PDF抽出確認に留めた。
-- `deliverables/kessan_tanshin_ai_reader/`、`deliverables/kessan_tanshin_ai_reader_clean/`、`deliverables/UPLOAD_THIS_TO_GITHUB_kessan_tanshin_ai_reader/` は作業途中の旧フォルダ。OneDriveのロックや重複コピーが残ったため、GitHubへはアップロードしない。
-- ローカルでの再 `npm install` / クリーン `npm ci` はOneDrive配下のEPERMで失敗する場合がある。Cloudflare Pages側ではリポジトリ直下で `npm run build` を実行する。
-- `node_modules/`、`dist/`、`.npm-cache/`、`.npm-pack-cache/`、`.manual-rollup/` はGitHubアップロード対象外。`.gitignore` に含めている。
-- 既にスマホで旧版を開いていた場合、初回アクセス時にService Worker更新で自動リロードされる。まだ旧表示ならChromeのサイトデータ削除または強制再読み込みで確認する。
-- 新版が表示されていれば、ホーム最上部に「要約強化版 2026-05-09.5」カードが見える。
+- 外部LLM APIは未実装。APIキー入力欄もない。
+- ブラウザ視覚確認はセキュリティポリシーで拒否されたため、HTTP応答、TDnet/JPX取得、ビルド成果物、実PDF抽出確認に留めた。
+- `deliverables/kessan_tanshin_ai_reader/`、`deliverables/kessan_tanshin_ai_reader_clean/`、`deliverables/UPLOAD_THIS_TO_GITHUB_kessan_tanshin_ai_reader/`、`deliverables/GITHUB_UPLOAD_kessan_tanshin_ai_reader/` は作業途中の旧フォルダ。OneDriveのロック、重複コピー、生成済み `dist/` が残ったため、GitHubへはアップロードしない。
+- ローカルでのクリーン `npm ci` はOneDrive配下のEPERMで失敗する場合がある。Cloudflare Pages側ではリポジトリ直下で `npm run build` を実行する。

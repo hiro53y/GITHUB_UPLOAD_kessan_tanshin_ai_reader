@@ -64,7 +64,7 @@ export default defineConfig({
         ]
       },
       workbox: {
-        navigateFallbackDenylist: [/^\/tdnet/, /^\/tdnet-search/, /^\/api\/proxy/],
+        navigateFallbackDenylist: [/^\/tdnet/, /^\/tdnet-search/, /^\/api\//],
         runtimeCaching: [
           {
             urlPattern: ({ request }) => request.destination === "document",
@@ -90,6 +90,7 @@ export default defineConfig({
     sourcemap: false
   },
   test: {
+    // DOM 依存のない純粋なロジック層のみテスト対象（ruleAnalyzer / disclosureScorer 等）
     environment: "node",
     include: ["tests/**/*.test.ts"],
     globals: false

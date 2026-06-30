@@ -234,6 +234,7 @@ function extractNumbers(pages: Array<{ pageNumber: number; text: string }>): Ext
   for (const page of pages) {
     for (const label of numberLabels) {
       let searchFrom = 0;
+      // 同一ページ内の複数の出現を順番に拾う（最大3件）
       let hitsInPage = 0;
       while (hitsInPage < 3) {
         const labelIndex = page.text.indexOf(label, searchFrom);
@@ -241,12 +242,15 @@ function extractNumbers(pages: Array<{ pageNumber: number; text: string }>): Ext
         searchFrom = labelIndex + label.length;
 
         const after = page.text.slice(searchFrom, searchFrom + 200);
+        // ラベル直後で最初に出てくる数値（単位付きかどうかも捉える）
         const matches = Array.from(after.matchAll(/([△▲\-]?\d[\d,]*(?:\.\d+)?)\s*([%％]|ポイント)?/gu));
         let captured: string | undefined;
         for (const m of matches) {
           const num = m[1];
           const unit = m[2];
+          // 年号スキップ
           if (/^20[0-3]\d$/.test(num.replace(/[△▲\-]/g, ""))) continue;
+          // %・ポイント付き値は成長率/構成比なので、許容ラベル以外では除外
           if (unit && !percentLabels.has(label)) continue;
           if (!isLikelyMetricValue(num, label)) continue;
           captured = num;
@@ -322,11 +326,14 @@ type AmountUnit = "百万円" | "千円" | "円";
 
 /**
  * 数値を本来の通貨単位（百万円・千円・円）に対して、読みやすい億円/百万円/円に整形。
+ * 短信は通常「百万円」が標準だが、中小型企業の一部は「千円」または「円」表記もあるので
+ * `unit` 引数で実体単位を渡せるようにした（未指定なら百万円扱い）。
  */
 function formatYenAmount(rawValue: string, unit: AmountUnit = "百万円"): string {
   const cleaned = rawValue.replace(/[△▲]/g, "-").replace(/,/g, "").trim();
   const num = Number(cleaned);
   if (!Number.isFinite(num)) return `${rawValue}${unit}`;
+  // 円相当に正規化
   const yen = unit === "百万円" ? num * 1_000_000 : unit === "千円" ? num * 1_000 : num;
   const absYen = Math.abs(yen);
   if (absYen >= 1_000_000_000_000) {
@@ -357,7 +364,7 @@ function metricWithGrowth(label: string, value: string, growth: string): string 
 
 /**
  * ラベルベース値抽出：label の直後 lookahead 文字以内から、
- *   1つ目の純粋な数値（金額単位 or 単位なし）を実数値、
+ *   1つ目の純粋な数値（%/ポイント無し）を実数値、
  *   2つ目の数値（%/ポイント等の単位付き優先）を成長率として返す。
  * 年号らしい4桁（20XX）は除外。
  */
@@ -384,7 +391,7 @@ function findValueAfter(
       value = num;
       continue;
     }
-    // 成長率候補（%/ポイント付き）
+    // 成長率候補（%/ポイント付き）。直後の取りこぼし防止のため、value より後でも採用
     if (isPercent && value && !growth) {
       growth = num;
       break;
@@ -423,6 +430,7 @@ function parsePerformanceByLabels(text: string): FinancialMetricRow | undefined 
     "当期純利益"
   ]);
 
+  // 全てそろっていなくても、3つそろえば部分採用（最後の値を 0 でフォールバック）
   if (!sales || !op || !ord || !net) return undefined;
 
   return {
@@ -453,6 +461,7 @@ function parseForecastByLabels(text: string): ForecastMetricRow | undefined {
     const i = text.indexOf(anchor);
     if (i >= 0) { idx = i; break; }
   }
+  // 強アンカーが無いとき、フォールバックで「通期」（ただし周辺に「予想」or「百万円」を要求して本文記述を除外）
   if (idx < 0) {
     const m = text.match(/通期[\s\S]{0,200}(?:予想|百万円|千円)/u);
     if (m && m.index !== undefined) idx = m.index;
@@ -529,6 +538,7 @@ function parseFinancialDigest(rawText: string): FinancialDigestBase {
   // 配当：5値（第1Q/第2Q/第3Q/期末/年間）が並ぶ表になるため、最初2値で代用すると致命的に誤る。
   // 「期末」「年間」のラベル直後の数値を個別に拾う。
   const dividendSegment = (() => {
+    // 配当予想行が含まれるブロックを限定（「20XX年X月期（予想）」近傍）
     const m = text.match(/20\d{2}年[0-9０-９]+月期\s*[（(]\s*予想\s*[）)][\s\S]{0,400}/u);
     return m ? m[0] : text;
   })();

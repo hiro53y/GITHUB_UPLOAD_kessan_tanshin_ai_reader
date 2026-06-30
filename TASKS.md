@@ -17,10 +17,14 @@
 - [x] Cloudflare Pages/Workers公開用ファイルを追加する
 - [x] 独自ビルド成果物のブラウザ実行時クラッシュ要因を修正する
 - [x] `deliverables/` 直下にGitHubアップロード用の単一フォルダを作成する
-- [x] Cloudflare Pages Functions proxyを追加してPDF URL取得を改善する
-- [x] 外部APIなしの無料AI要約を追加する
-- [x] Yahoo!ファイナンス銘柄コード検索リンクを追加する
-- [x] レポート内の原文確認誘導を根拠ページ表示へ変更する
+- [x] TDnet公開期間外をJPX会社別開示履歴で補完する（2026-06-20）
+- [x] Cloudflare Pages同一オリジンproxyを既定経路にする（2026-06-20）
+- [x] 5451の短期検索漏れを防ぐため最新決算探索を最低120日にする（2026-06-25）
+
+- [x] 要約品質改善：決算サマリー・無料AI診断を転記なし・箇条書き形式に刷新（2026-05-10）
+- [x] freeAiDigest型追加・旧履歴データの後方互換マイグレーション実装（2026-05-10）
+- [x] ReportPage.tsx に「無料AI診断・要点」カード追加（verdict/良い点/注意点/トピック別サマリー）
+- [x] dist再ビルド・deliverables/GITHUB_UPLOAD_kessan_tanshin_ai_reader/dist/ に反映（2026-05-10）
 
 ## 未完了
 

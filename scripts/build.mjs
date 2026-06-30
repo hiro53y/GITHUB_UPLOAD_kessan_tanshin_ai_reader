@@ -1,5 +1,5 @@
 import { existsSync, statSync } from "node:fs";
-import { copyFile, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
@@ -16,9 +16,6 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, "..");
 const dist = path.join(root, "dist");
 const assets = path.join(dist, "assets");
-const BUILD_ID = "20260509-5";
-const APP_JS = `app-${BUILD_ID}.js`;
-const APP_CSS = `index-${BUILD_ID}.css`;
 
 async function copyDir(src, dest) {
   try {
@@ -128,6 +125,10 @@ function nodeModuleResolverPlugin() {
         return resolveLocal(path.resolve(importerDir, source));
       }
       try {
+        if (source === "fflate") {
+          const packageDir = path.dirname(require.resolve("fflate/package.json", { paths: [root] }));
+          return path.join(packageDir, "esm", "browser.js");
+        }
         const importerDir = importer && !importer.startsWith("\0") ? path.dirname(importer) : root;
         return require.resolve(source, { paths: [importerDir, root] });
       } catch {
@@ -164,10 +165,10 @@ async function buildCss() {
   const input = await readFile(path.join(root, "src", "index.css"), "utf8");
   const result = await postcss([tailwindcss({ config: path.join(root, "tailwind.config.js") }), autoprefixer]).process(input, {
     from: path.join(root, "src", "index.css"),
-    to: path.join(assets, APP_CSS)
+    to: path.join(assets, "index.css")
   });
   await mkdir(assets, { recursive: true });
-  await writeFile(path.join(assets, APP_CSS), result.css);
+  await writeFile(path.join(assets, "index.css"), result.css);
 }
 
 async function buildJs() {
@@ -193,7 +194,7 @@ async function buildJs() {
     dir: dist,
     format: "es",
     sourcemap: false,
-    entryFileNames: `assets/${APP_JS}`,
+    entryFileNames: "assets/app.js",
     chunkFileNames: "assets/[name]-[hash].js",
     assetFileNames: "assets/[name]-[hash][extname]"
   });
@@ -212,23 +213,15 @@ async function writeHtmlAndPwa() {
     <meta name="description" content="決算短信を読むための補助PWA" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="icon" href="/icon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/assets/${APP_CSS}" />
+    <link rel="stylesheet" href="/assets/index.css" />
     <title>決算短信AIリーダー</title>
   </head>
   <body>
     <div id="root"></div>
-    <script type="module" src="/assets/${APP_JS}"></script>
+    <script type="module" src="/assets/app.js"></script>
     <script>
       if ("serviceWorker" in navigator) {
-        let reloadedByServiceWorker = false;
-        navigator.serviceWorker.addEventListener("controllerchange", () => {
-          if (reloadedByServiceWorker) return;
-          reloadedByServiceWorker = true;
-          window.location.replace(window.location.pathname + window.location.search + window.location.hash);
-        });
-        window.addEventListener("load", () => {
-          navigator.serviceWorker.register("/sw.js?v=${BUILD_ID}").then((registration) => registration.update().catch(() => {})).catch(() => {});
-        });
+        window.addEventListener("load", () => navigator.serviceWorker.register("/sw.js").catch(() => {}));
       }
     </script>
   </body>
@@ -261,38 +254,23 @@ async function writeHtmlAndPwa() {
 
   await writeFile(
     path.join(dist, "sw.js"),
-    `const CACHE = "kessan-reader-v${BUILD_ID}";
-const CACHE_PREFIX = "kessan-reader-";
-const APP_SHELL = ["/", "/index.html", "/assets/${APP_CSS}", "/assets/${APP_JS}", "/icon.svg", "/maskable-icon.svg"];
+    `const CACHE = "kessan-reader-v2";
 self.addEventListener("install", (event) => {
   self.skipWaiting();
-  event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(APP_SHELL)));
+  event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(["/", "/index.html", "/assets/index.css", "/assets/app.js", "/icon.svg", "/maskable-icon.svg"])));
 });
-self.addEventListener("activate", (event) => {
-  event.waitUntil(
-    caches.keys()
-      .then((keys) => Promise.all(keys.filter((key) => key.startsWith(CACHE_PREFIX) && key !== CACHE).map((key) => caches.delete(key))))
-      .then(() => self.clients.claim())
-  );
-});
+self.addEventListener("activate", (event) => event.waitUntil(Promise.all([
+  caches.keys().then((keys) => Promise.all(keys.filter((key) => key !== CACHE).map((key) => caches.delete(key)))),
+  self.clients.claim()
+])));
 self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
-  if (url.pathname.startsWith("/tdnet")) return;
-  if (url.pathname.startsWith("/api/proxy")) return;
+  if (url.pathname.startsWith("/tdnet") || url.pathname.startsWith("/api/")) return;
   if (event.request.mode === "navigate") {
     event.respondWith(fetch(event.request).catch(() => caches.match("/index.html")));
     return;
   }
   if (event.request.method === "GET") {
-    const networkFirst = url.pathname === "/sw.js" || url.pathname === "/manifest.webmanifest" || url.pathname.startsWith("/assets/");
-    if (networkFirst) {
-      event.respondWith(fetch(event.request).then((response) => {
-        const copy = response.clone();
-        caches.open(CACHE).then((cache) => cache.put(event.request, copy));
-        return response;
-      }).catch(() => caches.match(event.request)));
-      return;
-    }
     event.respondWith(caches.match(event.request).then((cached) => cached || fetch(event.request).then((response) => {
       const copy = response.clone();
       caches.open(CACHE).then((cache) => cache.put(event.request, copy));
@@ -306,10 +284,6 @@ self.addEventListener("fetch", (event) => {
 
 export async function buildApp() {
   await mkdir(assets, { recursive: true });
-  await Promise.all([
-    rm(path.join(assets, "app.js"), { force: true }).catch(() => {}),
-    rm(path.join(assets, "index.css"), { force: true }).catch(() => {})
-  ]);
   await copyDir(path.join(root, "public"), dist);
   await buildCss();
   await buildJs();

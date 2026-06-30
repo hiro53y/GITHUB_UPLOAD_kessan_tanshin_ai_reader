@@ -59,7 +59,7 @@ export function SettingsPanel({
             />
           </label>
           <p className="rounded-xl bg-blue-50 p-3 text-sm leading-6 text-slate-600">
-            TDnet公開閲覧は掲載期間が限られ、CORSやHTML変更で失敗する場合があります。失敗時は手動PDFアップロードまたはPDF URL貼り付けで続行できます。
+            Cloudflare Pagesでは同梱proxyを自動利用します。TDnetの掲載期間外はJPX上場会社情報の開示履歴で補完します。検索期間が120日未満でも、最新決算が見つからない場合は120日まで自動拡張します。それでも失敗した場合は手動PDFアップロードまたはPDF URL貼り付けで続行できます。
           </p>
         </div>
       </Card>

@@ -1,4 +1,4 @@
-import { lookupJpxDisclosures } from "../../worker/src/jpxDisclosures";
+import { lookupJpxDisclosures } from "../lib/jpxDisclosures";
 
 type PagesContext = {
   request: Request;

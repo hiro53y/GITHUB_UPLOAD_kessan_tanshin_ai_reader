@@ -1,3 +1,4 @@
+/** Pages Functions と外部Workerで共用するJPX開示履歴クライアント。 */
 const JPX_BASE_URL = "https://www2.jpx.co.jp";
 const JPX_SEARCH_URL = `${JPX_BASE_URL}/tseHpFront/JJK010010Action.do?Show=Show`;
 const JPX_DETAIL_URL = `${JPX_BASE_URL}/tseHpFront/JJK010030Action.do`;

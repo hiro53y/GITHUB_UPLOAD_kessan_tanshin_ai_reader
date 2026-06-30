@@ -178,12 +178,14 @@ function getGrowthRate(facts: FactEntry[], kind: ContextKind, group: keyof typeo
 type SourceFile = { name: string; data: Uint8Array; kind: "xbrl" | "ixbrl" };
 
 function findSourceFile(entries: Record<string, Uint8Array>): SourceFile | undefined {
+  // 優先: .xbrl ファイル（Summary フォルダ優先）
   const xbrlFiles = Object.entries(entries).filter(([name]) => /\.xbrl$/i.test(name));
   if (xbrlFiles.length) {
     const summary = xbrlFiles.find(([name]) => /Summary/i.test(name));
     const target = summary || xbrlFiles[0];
     return { name: target[0], data: target[1], kind: "xbrl" };
   }
+  // フォールバック: Summary/*-ixbrl.htm（inline XBRL）
   const ixbrl = Object.entries(entries).find(([name]) => /Summary\/.*ixbrl.*\.htm/i.test(name)) ||
                 Object.entries(entries).find(([name]) => /Summary\/.+\.htm/i.test(name));
   return ixbrl ? { name: ixbrl[0], data: ixbrl[1], kind: "ixbrl" } : undefined;
@@ -205,13 +207,16 @@ function parseFacts(xmlText: string): FactEntry[] {
 
 /**
  * inline XBRL (iXBRL) HTML から ix:nonFraction / ix:nonNumeric の値を抽出する。
+ * - 例: <ix:nonFraction name="tse-ed-t:NetSales" contextRef="CurrentYearDuration" unitRef="JPY" decimals="-6" scale="6">12345</ix:nonFraction>
+ * - 簡易正規表現ベース（DOMParser不要・Node環境でも動く）
  */
 function parseIxbrlFacts(htmlText: string): FactEntry[] {
   const facts: FactEntry[] = [];
+  // ix:nonFraction または ix:nonNumeric タグを抽出。属性順序に依存しないよう個別 regex
   const tagRe = /<(?:ix:)?(nonFraction|nonNumeric)\b([^>]*)>([\s\S]*?)<\/(?:ix:)?\1>/gi;
   for (const match of htmlText.matchAll(tagRe)) {
     const attrs = match[2];
-    const inner = match[3].replace(/<[^>]*>/g, "").trim();
+    const inner = match[3].replace(/<[^>]*>/g, "").trim(); // 内部のHTMLタグを除去
     const nameMatch = attrs.match(/\bname\s*=\s*["']([^"']+)["']/);
     const ctxMatch = attrs.match(/\bcontextRef\s*=\s*["']([^"']+)["']/);
     const unitMatch = attrs.match(/\bunitRef\s*=\s*["']([^"']+)["']/);
@@ -219,6 +224,7 @@ function parseIxbrlFacts(htmlText: string): FactEntry[] {
     const scaleMatch = attrs.match(/\bscale\s*=\s*["']([^"']+)["']/);
     const signMatch = attrs.match(/\bsign\s*=\s*["']([^"']+)["']/);
     if (!nameMatch || !ctxMatch || !inner) continue;
+    // scale 属性があれば値を 10^scale 倍する（iXBRL の通例）
     let value = inner.replace(/,/g, "");
     const scaleN = scaleMatch ? Number(scaleMatch[1]) : 0;
     if (Number.isFinite(scaleN) && scaleN !== 0) {
@@ -248,15 +254,15 @@ export async function extractXbrlMetrics(url: string, signal?: AbortSignal): Pro
       filter: (file) => /\.(xbrl|xml|htm|html)$/i.test(file.name)
     });
 
-    const target = findSummaryXbrl(entries);
+    const target = findSourceFile(entries);
     if (!target) {
       return { ok: false, unit: "百万円", source: "none", error: "XBRL ファイルが zip 内に見つかりませんでした" };
     }
 
     const xmlText = strFromU8(target.data);
-    const facts = parseFacts(xmlText);
+    const facts = target.kind === "ixbrl" ? parseIxbrlFacts(xmlText) : parseFacts(xmlText);
     if (!facts.length) {
-      return { ok: false, unit: "百万円", source: "none", error: "XBRL fact が抽出できませんでした", xbrlFileName: target.name };
+      return { ok: false, unit: "百万円", source: "none", error: "XBRL/iXBRL fact が抽出できませんでした", xbrlFileName: target.name };
     }
 
     const decimalsCount: Record<string, number> = {};
@@ -273,8 +279,12 @@ export async function extractXbrlMetrics(url: string, signal?: AbortSignal): Pro
       const ord = pickValue(facts, ELEMENT_ALIASES.ordinaryProfit, kind);
       const net = pickValue(facts, ELEMENT_ALIASES.netProfit, kind);
       if (!sales && !op && !ord && !net) return undefined;
+      // XBRLの金額factは unitRef=JPY＝常に「円全額」で格納される（decimals は精度メタデータであり単位ではない）。
+      // iXBRL経路でも parseIxbrlFacts が scale を適用して円全額に正規化済み。
+      // したがって換算元は常に「円」。これを detectedUnit（表示単位）へ圧縮する。
+      // （旧実装は decimals を単位と取り違え、円全額を「百万円」とみなして下流 fmtAmount が ×1e6 し1,000,000倍過大になっていた）
       const toDisplay = (entry?: FactEntry) =>
-        entry ? convertToUnit(entry.value, unitFromDecimals(entry.decimals) || detectedUnit, detectedUnit) : "";
+        entry ? convertToUnit(entry.value, "円", detectedUnit) : "";
       return {
         period: sales ? periodLabelFromContext(sales.contextRef) : "当期",
         sales: toDisplay(sales),

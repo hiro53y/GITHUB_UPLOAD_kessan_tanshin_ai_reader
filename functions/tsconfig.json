@@ -4,6 +4,6 @@
     "lib": ["ES2020"],
     "types": ["@cloudflare/workers-types"]
   },
-  "include": ["api", "../worker/src/jpxDisclosures.ts"],
+  "include": ["api", "lib"],
   "references": []
 }

@@ -26,8 +26,30 @@ function allowedHosts(env: Record<string, unknown>): string[] {
   return [...DEFAULT_ALLOWED_HOSTS, ...extra];
 }
 
+/** プライベート/内部宛先（SSRF対策）。localhost・RFC1918・リンクローカル・メタデータIP等を弾く。 */
+function isPrivateHost(hostname: string): boolean {
+  const host = hostname.toLowerCase();
+  if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".internal") || host.endsWith(".local")) return true;
+  // IPv4 リテラルの場合のみ数値判定（ドメイン名は誤判定しない）
+  const m = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (m) {
+    const [a, b] = [Number(m[1]), Number(m[2])];
+    if (a === 10) return true;
+    if (a === 127) return true;
+    if (a === 0) return true;
+    if (a === 169 && b === 254) return true; // link-local / クラウドメタデータ
+    if (a === 172 && b >= 16 && b <= 31) return true;
+    if (a === 192 && b === 168) return true;
+    if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT
+  }
+  // IPv6 ループバック/リンクローカル/ユニークローカル
+  if (host === "[::1]" || host === "::1" || host.startsWith("[fe80:") || host.startsWith("[fc") || host.startsWith("[fd")) return true;
+  return false;
+}
+
 function isAllowedTarget(target: URL, method: string, env: Record<string, unknown>): boolean {
   if (allowedHosts(env).includes(target.hostname)) return true;
+  if (isPrivateHost(target.hostname)) return false;
   return method === "GET" && target.protocol === "https:" && target.pathname.toLowerCase().endsWith(".pdf");
 }
 
@@ -88,15 +110,11 @@ export async function onRequest(context: ProxyContext): Promise<Response> {
     const headers = new Headers();
     const contentType = request.headers.get("content-type");
     if (contentType) headers.set("Content-Type", contentType);
-    // 一般的なブラウザ User-Agent を装う（TDnet/JPXが独自UAを拒否するケースに対応）
     headers.set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
     headers.set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
     headers.set("Accept-Language", "ja,en;q=0.9");
-    // TDnet/JPX が Referer をチェックするケースに備えて同一オリジンを設定
     headers.set("Referer", `${target.protocol}//${target.host}/`);
 
-    // POST body は ReadableStream のままだとランタイムによって転送失敗するため、
-    // 一度文字列化してから upstream に渡す（小さなフォーム送信のみを想定）
     const bodyText = request.method === "POST" ? await request.text() : undefined;
 
     const upstream = await fetch(target.toString(), {

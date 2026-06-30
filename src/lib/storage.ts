@@ -53,7 +53,8 @@ export function saveSettings(settings: AppSettings): { ok: boolean; error?: stri
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
     return { ok: true };
   } catch (error) {
-    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    const message = error instanceof Error ? error.message : String(error);
+    return { ok: false, error: message };
   }
 }
 
@@ -69,7 +70,8 @@ export function listHistory(): HistoryItem[] {
 export const HISTORY_LIMIT = 50;
 
 /**
- * 履歴を保存。QuotaExceeded時は段階的にトリム件数を増やしてリトライ。
+ * 履歴を保存。50件超過で古いものをトリミングした場合は trimmed=true を返す。
+ * QuotaExceededError 等で保存失敗した場合は ok=false を返す（呼び出し側で通知）。
  */
 export function saveHistoryItem(item: HistoryItem): { ok: boolean; trimmed: boolean; error?: string } {
   const current = listHistory();
@@ -84,6 +86,7 @@ export function saveHistoryItem(item: HistoryItem): { ok: boolean; trimmed: bool
       return { ok: true, trimmed: merged.length > limit };
     } catch (error) {
       lastError = error;
+      // QuotaExceeded: 次のより小さい limit で再試行
     }
   }
   return {

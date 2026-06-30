@@ -1,4 +1,4 @@
-import { BarChart3, ClipboardCopy, ExternalLink, FileUp, Link, Search, ShieldAlert } from "lucide-react";
+import { BarChart3, ClipboardCopy, FileUp, Link, Search, ShieldAlert } from "lucide-react";
 import { useRef, useState } from "react";
 import type { HistoryItem } from "../lib/types";
 import { formatDateTime } from "../lib/utils";
@@ -29,20 +29,9 @@ export function HomePage({
   const [companyName, setCompanyName] = useState(lastTicker?.companyName ?? "");
   const [pdfUrl, setPdfUrl] = useState("");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const openYahooCodeSearch = () => {
-    const query = encodeURIComponent(companyName || ticker || "");
-    window.open(`https://finance.yahoo.co.jp/search/?query=${query}`, "_blank", "noopener,noreferrer");
-  };
 
   return (
     <div className="space-y-4">
-      <Card title="要約強化版 2026-05-09.5" action={<StatusBadge tone="green">更新済み</StatusBadge>}>
-        <div className="space-y-2 rounded-xl border border-green-200 bg-green-50 p-3 text-sm font-bold leading-6 text-green-800">
-          <p>決算診断、良い点・注意点、主要数値、Yahoo!ファイナンス銘柄検索、PDF URL proxyを強化済みです。</p>
-          <p>このカードが見えていれば、新しい版が表示されています。</p>
-        </div>
-      </Card>
-
       {latestHistory ? (
         <Card
           title="最新分析サマリー"
@@ -55,7 +44,7 @@ export function HomePage({
           <div className="rounded-xl border border-blue-100 bg-blue-50 p-3 text-lg font-bold leading-8 text-slate-950">
             一言サマリー: {latestHistory.oneLineSummary}
           </div>
-          <p className="mt-3 text-sm text-slate-500">最終更新: {formatDateTime(latestHistory.analyzedAt)} / 分析方式: 標準ルール分析 + 無料AI要約</p>
+          <p className="mt-3 text-sm text-slate-500">最終更新: {formatDateTime(latestHistory.analyzedAt)} / 分析方式: 標準ルール分析</p>
         </Card>
       ) : null}
 
@@ -81,10 +70,6 @@ export function HomePage({
               className="h-13 w-full rounded-xl border border-blue-200 px-4 text-lg text-slate-950 outline-none focus:border-brand-600"
             />
           </label>
-          <OutlineButton onClick={openYahooCodeSearch}>
-            <ExternalLink className="h-5 w-5" />
-            Yahoo!ファイナンスで銘柄コード検索
-          </OutlineButton>
           <PrimaryButton onClick={() => onAnalyzeTicker(ticker, companyName || undefined)} disabled={isProcessing || !ticker}>
             <Search className="h-5 w-5" />
             {isProcessing ? "処理中…" : "最新決算短信を取得して分析"}
@@ -122,7 +107,7 @@ export function HomePage({
               ["2. SELECT", "候補選定"],
               ["3. DOWNLOAD", "PDF取得"],
               ["4. EXTRACT", "テキスト抽出"],
-              ["5. ANALYZE", "無料AI要約"]
+              ["5. ANALYZE", "標準分析"]
             ].map(([title, label]) => (
               <div key={title} className="rounded-xl border border-emerald-100 bg-emerald-50 px-1 py-3">
                 <div className="text-[11px]">{title}</div>
@@ -150,14 +135,14 @@ export function HomePage({
               <div className="break-words text-lg font-bold text-slate-950">{latestHistory.companyName || "手動PDF資料"}</div>
               <div className="text-sm text-slate-500">取得日時: {formatDateTime(latestHistory.analyzedAt)}</div>
             </div>
-            <StatusBadge tone={latestHistory.status === "success" ? "green" : "orange"}>{latestHistory.status === "success" ? "分析完了" : "注意あり"}</StatusBadge>
+            <StatusBadge tone={latestHistory.status === "success" ? "green" : "orange"}>{latestHistory.status === "success" ? "分析完了" : "要確認"}</StatusBadge>
           </button>
         </Card>
       ) : null}
 
       <Card title="注意事項" icon={<ShieldAlert className="h-5 w-5" />}>
         <p className="leading-7 text-slate-700">
-          本アプリは投資助言ではありません。決算短信を読むための補助ツールです。PDFから抽出できたテキストをもとに、無料AI要約と標準ルール分析で内容を整理します。
+          本アプリは投資助言ではありません。決算短信を読むための補助ツールです。抽出・分析結果には誤りが含まれる可能性があります。最終確認は必ずTDnet、企業IR、決算短信原文で行ってください。
         </p>
       </Card>
 

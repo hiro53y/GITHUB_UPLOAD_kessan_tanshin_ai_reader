@@ -19,7 +19,13 @@ type SearchDate = {
 };
 
 const SEARCH_ERROR_MESSAGE =
-  "TDnet公開ページまたはproxyにアクセスできませんでした。Cloudflare Pagesで公開する場合は同梱の/api/proxyを使えます。手動PDFアップロード、またはPDF URL貼り付けでも続行できます。";
+  "TDnet公開ページまたはproxyにアクセスできませんでした。手動PDFアップロード、またはPDF URL貼り付けで続行してください。";
+
+export const MIN_LATEST_EARNINGS_LOOKBACK_DAYS = 120;
+
+export function effectiveEarningsLookbackDays(requestedDays: number): number {
+  return Math.max(MIN_LATEST_EARNINGS_LOOKBACK_DAYS, requestedDays);
+}
 
 function parseYmd(value: string): Date {
   return new Date(`${value.slice(0, 4)}-${value.slice(4, 6)}-${value.slice(6, 8)}T00:00:00+09:00`);
@@ -46,30 +52,6 @@ function parseSearchDates(html: string): SearchDate[] {
       date: parseYmd(option.value)
     }))
     .filter((item) => /^\d{8}$/.test(item.value));
-}
-
-function formatYmd(date: Date): string {
-  const parts = new Intl.DateTimeFormat("ja-JP", {
-    timeZone: "Asia/Tokyo",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit"
-  }).formatToParts(date);
-  const get = (type: string) => parts.find((part) => part.type === type)?.value || "";
-  return `${get("year")}${get("month")}${get("day")}`;
-}
-
-function buildRecentSearchDates(days = 31): SearchDate[] {
-  const today = new Date();
-  return Array.from({ length: days }, (_, index) => {
-    const date = new Date(today.getTime() - index * 24 * 60 * 60 * 1000);
-    const value = formatYmd(date);
-    return {
-      value,
-      label: value,
-      date: parseYmd(value)
-    };
-  });
 }
 
 function filterDatesByLookback(dates: SearchDate[], lookbackDays: number): SearchDate[] {
@@ -127,8 +109,9 @@ function buildResult(
   searchedAt: string,
   note?: string
 ): DisclosureFetchResult {
-  const selected = selectBestDisclosure(candidates);
-  const close = isCloseDecision(candidates);
+  const selectable = candidates.filter((item) => item.documentType !== "other");
+  const selected = selectBestDisclosure(selectable);
+  const close = isCloseDecision(selectable);
   const userMessage = selected
     ? close
       ? "上位候補の点差が小さいため、候補一覧を確認してください。最上位候補を仮選定しています。"
@@ -140,7 +123,7 @@ function buildResult(
     ticker: input.ticker,
     companyName: input.companyName || selected?.companyName,
     searchedAt,
-    source: "tdnet-public",
+    source: selected?.sourceUrl.includes("www2.jpx.co.jp") ? "jpx-company-service" : "tdnet-public",
     selectedDisclosure: selected,
     candidates,
     userMessage: note ? `${userMessage} ${note}` : userMessage
@@ -148,14 +131,69 @@ function buildResult(
 }
 
 async function getAvailableDates(signal?: AbortSignal): Promise<SearchDate[]> {
-  try {
-    const { text } = await fetchTextWithFallback(TDNET_SEARCH_HEAD_URL, undefined, signal);
-    const parsed = parseSearchDates(text);
-    return parsed.length ? parsed : buildRecentSearchDates();
-  } catch (error) {
-    if (error instanceof DOMException && error.name === "AbortError") throw error;
-    return buildRecentSearchDates();
+  const { text } = await fetchTextWithFallback(TDNET_SEARCH_HEAD_URL, undefined, signal);
+  return parseSearchDates(text);
+}
+
+type ArchiveDisclosureResponse = {
+  ok: boolean;
+  companyName?: string;
+  disclosures?: Array<{
+    id: string;
+    disclosedAt: string;
+    title: string;
+    ticker: string;
+    companyName: string;
+    pdfUrl: string;
+    sourceUrl: string;
+  }>;
+  error?: string;
+  message?: string;
+};
+
+async function searchJpxArchive(
+  ticker: string,
+  lookbackDays: number,
+  proxyUrl: string,
+  signal?: AbortSignal
+): Promise<{ companyName?: string; candidates: DisclosureItem[] }> {
+  const params = new URLSearchParams({ ticker, lookbackDays: String(lookbackDays) });
+  const configuredWorker = proxyUrl ? `${proxyUrl.replace(/\/$/, "")}/disclosures?${params}` : undefined;
+  const attempts = Array.from(new Set([configuredWorker, `/api/disclosures?${params}`].filter(Boolean))) as string[];
+  const errors: string[] = [];
+
+  for (const url of attempts) {
+    if (signal?.aborted) throw new DOMException("中断されました", "AbortError");
+    try {
+      const response = await fetch(url, { cache: "no-store", signal });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const body = (await response.json()) as ArchiveDisclosureResponse;
+      if (!body.ok || !Array.isArray(body.disclosures)) throw new Error(body.message || body.error || "invalid_response");
+      return {
+        companyName: body.companyName,
+        candidates: body.disclosures.map((item) => ({
+          ...item,
+          documentType: classifyDocumentTitle(item.title),
+          score: 0,
+          scoreReasons: []
+        }))
+      };
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") throw error;
+      errors.push(`${url}: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
+
+  throw new Error(errors.join(" / "));
+}
+
+function mergeDisclosures(...groups: DisclosureItem[][]): DisclosureItem[] {
+  const merged = new Map<string, DisclosureItem>();
+  for (const item of groups.flat()) {
+    const key = item.pdfUrl || item.id;
+    if (!merged.has(key)) merged.set(key, item);
+  }
+  return Array.from(merged.values());
 }
 
 async function searchByKeyword(
@@ -203,13 +241,7 @@ async function fallbackListSearch(
   for (const date of dates) {
     if (signal?.aborted) throw new DOMException("中断されました", "AbortError");
     const firstPageUrl = `${TDNET_INBS_URL}I_list_001_${date.value}.html`;
-    let text = "";
-    try {
-      text = (await fetchTextWithFallback(firstPageUrl, undefined, signal)).text;
-    } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") throw error;
-      continue;
-    }
+    const { text } = await fetchTextWithFallback(firstPageUrl, undefined, signal);
     pageCount += 1;
     const links = parseListPageLinks(text, date.value);
     const pageLinks = links.length ? links : [`I_list_001_${date.value}.html`];
@@ -220,15 +252,10 @@ async function fallbackListSearch(
         if (pageCount >= maxPages) return { candidates, truncated: true };
         pageCount += 1;
       }
-      try {
-        const html = link === `I_list_001_${date.value}.html`
-          ? text
-          : (await fetchTextWithFallback(`${TDNET_INBS_URL}${link}`, undefined, signal)).text;
-        candidates.push(...parseDisclosureRows(html, `${TDNET_INBS_URL}${link}`).filter((item) => item.ticker === ticker));
-      } catch (error) {
-        if (error instanceof DOMException && error.name === "AbortError") throw error;
-        continue;
-      }
+      const html = link === `I_list_001_${date.value}.html`
+        ? text
+        : (await fetchTextWithFallback(`${TDNET_INBS_URL}${link}`, undefined, signal)).text;
+      candidates.push(...parseDisclosureRows(html, `${TDNET_INBS_URL}${link}`).filter((item) => item.ticker === ticker));
     }
 
     if (candidates.some((item) => item.documentType === "earnings_release")) break;
@@ -267,44 +294,62 @@ export async function fetchLatestDisclosureByTicker(input: {
   }
 
   try {
-    const allDates = await getAvailableDates(input.signal);
-    const dates = filterDatesByLookback(allDates, input.lookbackDays);
-    if (!dates.length) {
-      return {
-        status: "not_found",
-        ticker,
-        companyName: input.companyName,
-        searchedAt,
-        source: "tdnet-public",
-        candidates: [],
-        userMessage: "TDnet公開閲覧ページで利用可能な検索日付が見つかりませんでした。手動PDFで続行してください。"
-      };
-    }
-
-    const newest = dates[0].value;
-    const oldest = dates[dates.length - 1].value;
-    let note = "";
+    let dates: SearchDate[] = [];
     let rawCandidates: DisclosureItem[] = [];
+    let tdnetError = "";
+    const notes: string[] = [];
+
     try {
-      rawCandidates = await searchByKeyword(ticker, oldest, newest, ticker, input.companyName, input.signal);
+      const allDates = await getAvailableDates(input.signal);
+      dates = filterDatesByLookback(allDates, input.lookbackDays);
+      if (dates.length) {
+        const newest = dates[0].value;
+        const oldest = dates[dates.length - 1].value;
+        rawCandidates = await searchByKeyword(ticker, oldest, newest, ticker, input.companyName, input.signal);
+        if (!rawCandidates.length && input.companyName) {
+          rawCandidates = await searchByKeyword(input.companyName, oldest, newest, ticker, input.companyName, input.signal);
+        }
+      }
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") throw error;
-      note = "検索フォーム取得に失敗したため、日別一覧探索へ切り替えました。";
+      tdnetError = error instanceof Error ? error.message : String(error);
     }
 
-    if (!rawCandidates.length && input.companyName) {
+    const hasEarningsCandidate = rawCandidates.some((item) =>
+      item.documentType === "earnings_release" || item.documentType === "earnings_presentation"
+    );
+    let archiveError = "";
+    if (!hasEarningsCandidate) {
       try {
-        rawCandidates = await searchByKeyword(input.companyName, oldest, newest, ticker, input.companyName, input.signal);
+        const archiveLookbackDays = effectiveEarningsLookbackDays(input.lookbackDays);
+        const archive = await searchJpxArchive(ticker, archiveLookbackDays, settings.proxyUrl, input.signal);
+        if (archive.candidates.length) {
+          rawCandidates = mergeDisclosures(rawCandidates, archive.candidates);
+          if (!input.companyName && archive.companyName) input.companyName = archive.companyName;
+          if (archiveLookbackDays > input.lookbackDays) {
+            notes.push(`設定期間${input.lookbackDays}日内に決算資料がなかったため、最新決算の探索を${archiveLookbackDays}日まで自動拡張しました。`);
+          }
+          notes.push("TDnetの公開期間外をJPX上場会社情報の開示履歴で補完しました。");
+        }
       } catch (error) {
         if (error instanceof DOMException && error.name === "AbortError") throw error;
-        note = note || "会社名検索に失敗したため、日別一覧探索へ切り替えました。";
+        archiveError = error instanceof Error ? error.message : String(error);
       }
     }
 
-    if (!rawCandidates.length) {
-      const fallback = await fallbackListSearch(dates, ticker, 40, input.signal);
-      rawCandidates = fallback.candidates;
-      if (fallback.truncated) note = "過剰アクセスを避けるため、一覧ページ探索は途中で停止しました。";
+    if (!rawCandidates.length && dates.length) {
+      try {
+        const fallback = await fallbackListSearch(dates, ticker, 40, input.signal);
+        rawCandidates = fallback.candidates;
+        if (fallback.truncated) notes.push("過剰アクセスを避けるため、一覧ページ探索は途中で停止しました。");
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") throw error;
+        if (!tdnetError) tdnetError = error instanceof Error ? error.message : String(error);
+      }
+    }
+
+    if (!rawCandidates.length && tdnetError && archiveError) {
+      throw new Error(`TDnet: ${tdnetError} / JPX: ${archiveError}`);
     }
 
     const dateMsValues = rawCandidates
@@ -317,7 +362,7 @@ export async function fetchLatestDisclosureByTicker(input: {
       .map((item) => scoreDisclosure(item, { ticker, companyName: input.companyName, newestDateMs, oldestDateMs }))
       .sort((a, b) => b.score - a.score);
 
-    const result = buildResult({ ticker, companyName: input.companyName }, candidates, searchedAt, note);
+    const result = buildResult({ ticker, companyName: input.companyName }, candidates, searchedAt, notes.join(" "));
     if (result.status === "success") setDisclosureCache(cacheKey, result);
     return result;
   } catch (error) {

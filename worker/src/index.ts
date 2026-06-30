@@ -234,4 +234,44 @@ async function handleDisclosures(request: Request, env: Env, ctx: ExecutionConte
   if (request.method !== "GET") return jsonError("method_not_allowed", 405);
   if (!(await checkRateLimitDO(request, env))) return jsonError("rate_limited", 429);
 
-  const requestUrl = 
+  const requestUrl = new URL(request.url);
+  const ticker = (requestUrl.searchParams.get("ticker") || "").trim();
+  const lookbackDays = Number(requestUrl.searchParams.get("lookbackDays") || "120");
+  if (!/^\d{4}$/.test(ticker)) return jsonError("invalid_ticker", 400);
+  if (!Number.isFinite(lookbackDays)) return jsonError("invalid_lookback", 400);
+
+  const normalizedLookback = Math.max(30, Math.min(365, Math.round(lookbackDays)));
+  const cache = (caches as unknown as { default: Cache }).default;
+  const cacheKey = new Request(`${requestUrl.origin}/cache/jpx/${ticker}?lookbackDays=${normalizedLookback}`);
+  const cached = await cache.match(cacheKey);
+  if (cached) {
+    const response = new Response(cached.body, cached);
+    response.headers.set("Access-Control-Allow-Origin", "*");
+    response.headers.set("X-Proxy-Cache", "HIT");
+    return response;
+  }
+
+  try {
+    const result = await lookupJpxDisclosures({ ticker, lookbackDays: normalizedLookback });
+    const response = jsonOk(result);
+    response.headers.set("Cache-Control", "public, max-age=600");
+    response.headers.set("X-Proxy-Cache", "MISS");
+    ctx.waitUntil(cache.put(cacheKey, response.clone()));
+    return response;
+  } catch (error) {
+    return jsonError(`jpx_lookup_failed: ${error instanceof Error ? error.message : String(error)}`, 502);
+  }
+}
+
+export default {
+  fetch(request: Request, env: Env, ctx: ExecutionContext) {
+    const url = new URL(request.url);
+    if (url.pathname === "/ai/summarize") {
+      return handleAiSummarize(request, env).catch((error) => jsonError(error instanceof Error ? error.message : String(error), 500));
+    }
+    if (url.pathname === "/disclosures") {
+      return handleDisclosures(request, env, ctx).catch((error) => jsonError(error instanceof Error ? error.message : String(error), 500));
+    }
+    return handleProxy(request, env, ctx).catch((error) => jsonError(error instanceof Error ? error.message : String(error), 500));
+  }
+};

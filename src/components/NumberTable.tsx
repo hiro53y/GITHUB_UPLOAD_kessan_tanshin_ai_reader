@@ -2,7 +2,7 @@ import type { ExtractedNumber } from "../lib/types";
 
 export function NumberTable({ numbers }: { numbers: ExtractedNumber[] }) {
   if (!numbers.length) {
-    return <p className="text-slate-600">数値候補は自動抽出されませんでした。PDFの表崩れにより数値を抽出できない場合があります。</p>;
+    return <p className="text-slate-600">数値候補は自動抽出されませんでした。PDFの表崩れの可能性があるため、原文を確認してください。</p>;
   }
 
   return (

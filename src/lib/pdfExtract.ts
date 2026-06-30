@@ -39,7 +39,7 @@ export async function extractPdfText(input: File | ArrayBuffer | string, signal?
 
   const rawText = pages.map((page) => `--- ${page.pageNumber}ページ ---\n${page.text}`).join("\n\n");
   if (rawText.replace(/\s/g, "").length < 500) {
-    warnings.push("抽出できた文字数が少ないため、画像PDFまたは保護PDFの可能性があります。読み取れた範囲で要約します。");
+    warnings.push("抽出できた文字数が少なすぎます。画像PDFの可能性があります。原文を必ず確認してください。");
   }
   // 「PDFの表は…」の一般注意は冗長なため、低品質抽出（短い・抽出失敗ページが多い）時のみ表示
   const failedPageCount = pages.filter((p) => p.text.length < 30).length;

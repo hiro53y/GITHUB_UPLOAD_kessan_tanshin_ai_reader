@@ -1,4 +1,4 @@
-export type DisclosureSource = "tdnet-public" | "company-ir" | "manual";
+export type DisclosureSource = "tdnet-public" | "jpx-company-service" | "company-ir" | "manual";
 
 export type DisclosureDocumentType =
   | "earnings_release"

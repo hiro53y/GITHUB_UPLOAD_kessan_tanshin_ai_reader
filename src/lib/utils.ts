@@ -2,7 +2,7 @@ import type { LoadingStep } from "./types";
 import { SETTINGS_KEY } from "./storage";
 
 /** アプリビルド表示用バージョン（変更時はここを更新するだけでヘッダ・設定の両方に反映） */
-export const APP_BUILD_TAG = "2026-06-18.1";
+export const APP_BUILD_TAG = "2026-06-25.1";
 
 export const TDNET_BASE_URL = "https://www.release.tdnet.info";
 export const TDNET_INBS_URL = `${TDNET_BASE_URL}/inbs/`;
@@ -55,7 +55,7 @@ export function compactText(value: string, maxLength = 140): string {
 export function stripHtmlEntities(value: string): string {
   const textarea = document.createElement("textarea");
   textarea.innerHTML = value;
-  return textarea.value.replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim();
+  return textarea.value.replace(/ /g, " ").replace(/\s+/g, " ").trim();
 }
 
 export function absoluteTdnetUrl(url?: string | null): string | undefined {
@@ -94,7 +94,6 @@ function workerProxyUrl(url: string): string | undefined {
   return `${proxyUrl}/?url=${encodeURIComponent(url)}`;
 }
 
-/** 同一オリジン Cloudflare Pages Functions プロキシ（追加設定不要） */
 function pagesProxyUrl(url: string): string {
   return `/api/proxy?url=${encodeURIComponent(url)}`;
 }
@@ -106,8 +105,8 @@ function publicCorsProxyUrl(url: string): string {
 
 /**
  * URL に対してアクセス試行順を構築する。
- * - 本番（PROD）: 設定済みWorker → 同一オリジンPagesFunction → 公開CORSプロキシ → 直接アクセス
- *   いずれかが動けば取得成功する設計。
+ * - 本番（PROD）: 設定済みWorker、同一オリジンPages Function、直接アクセスの順。
+ *   Worker未設定でもPages Functionを自動利用し、CORS失敗を避ける。
  * - 開発（DEV）: 開発体験維持のため direct を先頭、その後 worker / devProxy。
  */
 function buildAttempts(url: string): string[] {
@@ -117,9 +116,47 @@ function buildAttempts(url: string): string[] {
   const publicProxy = publicCorsProxyUrl(url);
   const dev = devProxyUrl(url);
   if (import.meta.env?.PROD) {
+    // 本番: 設定済みWorker → 同一オリジンPagesFunction → 公開CORSプロキシ → 直接 の順
     return Array.from(new Set([worker, pages, publicProxy, direct].filter(Boolean))) as string[];
   }
   return Array.from(new Set([direct, worker, dev].filter(Boolean))) as string[];
+}
+
+/**
+ * 文字コードを判定してデコードする。TDnet/JPX のHTMLは Shift_JIS（一部 EUC-JP）で
+ * 配信されることがあり、charset 指定が HTTP ヘッダではなく <meta> にしか無い場合、
+ * response.text() は UTF-8 既定で誤デコード（文字化け）する。
+ * そこで bytes を取得し、HTTP ヘッダ → <meta charset> の順で charset を判定して
+ * TextDecoder で正しくデコードする。判定不能時は UTF-8 にフォールバックする。
+ * 注: ascii / shift_jis 等のラベルは Web 標準 Encoding API のものを使用。
+ */
+function decodeHtmlBytes(buffer: ArrayBuffer, contentType: string | null): string {
+  const bytes = new Uint8Array(buffer);
+  const normalize = (cs: string): string => {
+    const lower = cs.trim().toLowerCase().replace(/["']/g, "");
+    if (/^(shift[_-]?jis|sjis|x-sjis|ms_kanji|windows-31j|cp932)$/.test(lower)) return "shift_jis";
+    if (/^(euc-?jp|x-euc-jp)$/.test(lower)) return "euc-jp";
+    if (/^(iso-2022-jp)$/.test(lower)) return "iso-2022-jp";
+    if (/^utf-?8$/.test(lower)) return "utf-8";
+    return lower;
+  };
+  // 1) HTTPヘッダの charset
+  const headerCharset = contentType?.match(/charset\s*=\s*["']?([^"';\s]+)/i)?.[1];
+  let charset = headerCharset ? normalize(headerCharset) : "";
+  // 2) ヘッダに無ければ先頭バイト列を ASCII として読み <meta charset> を探す
+  if (!charset) {
+    const head = new TextDecoder("ascii").decode(bytes.subarray(0, 2048));
+    const metaCharset =
+      head.match(/<meta[^>]+charset\s*=\s*["']?([^"'>\s;]+)/i)?.[1] ||
+      head.match(/<meta[^>]+content\s*=\s*["'][^"']*charset=([^"'>\s;]+)/i)?.[1];
+    if (metaCharset) charset = normalize(metaCharset);
+  }
+  if (!charset) charset = "utf-8";
+  try {
+    return new TextDecoder(charset).decode(bytes);
+  } catch {
+    return new TextDecoder("utf-8").decode(bytes);
+  }
 }
 
 export async function fetchTextWithFallback(
@@ -139,7 +176,8 @@ export async function fetchTextWithFallback(
         ...(initFactory ? initFactory() : undefined)
       });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const text = await response.text();
+      const buffer = await response.arrayBuffer();
+      const text = decodeHtmlBytes(buffer, response.headers.get("content-type"));
       return {
         text,
         finalUrl: attemptUrl,
@@ -204,7 +242,7 @@ export async function copyToClipboard(text: string): Promise<boolean> {
 export function createInitialSteps(): LoadingStep[] {
   return [
     { id: 1, label: "銘柄コード確認", status: "waiting" },
-    { id: 2, label: "TDnet公開ページ検索", status: "waiting" },
+    { id: 2, label: "TDnet・JPX開示検索", status: "waiting" },
     { id: 3, label: "最新決算短信候補抽出", status: "waiting" },
     { id: 4, label: "PDF取得", status: "waiting" },
     { id: 5, label: "PDFテキスト抽出", status: "waiting" },

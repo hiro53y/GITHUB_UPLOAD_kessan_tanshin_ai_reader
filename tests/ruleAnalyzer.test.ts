@@ -4,7 +4,9 @@ import { analyzeDisclosureText } from "../src/lib/ruleAnalyzer";
 
 /**
  * ruleAnalyzer の振る舞いを fixture テキストで検証する。
- * 実在企業ではない合成データ。
+ *
+ * 注：実在企業の決算短信PDFテキストではなく、構造を模した合成データ。
+ * 数値・社名はテスト用のものであり、実在企業を指すものではない。
  */
 
 const fixtureTypicalQuarterly = `
@@ -70,6 +72,7 @@ describe("ruleAnalyzer.analyzeDisclosureText - 業績抽出", () => {
     expect(km.length).toBeGreaterThanOrEqual(3);
     const sales = km.find((k) => k.label === "売上高");
     expect(sales).toBeTruthy();
+    expect(sales?.value).toMatch(/123|億円|百万円/);
   });
 
   it("通期予想も別テーブルとして抽出される", () => {
@@ -77,12 +80,13 @@ describe("ruleAnalyzer.analyzeDisclosureText - 業績抽出", () => {
     expect(report.freeAiDigest.forecastMetrics.length).toBeGreaterThan(0);
   });
 
-  it("千円単位の短信でも数値が出力される（兆円に化けない）", () => {
+  it("千円単位の短信でも数値が出力される（桁数が極端に大きくならない）", () => {
     const report = analyzeDisclosureText({ pages: makePages(fixtureThousandYenUnit) });
     const km = report.freeAiDigest.keyMetrics;
     expect(km.length).toBeGreaterThan(0);
     const sales = km.find((k) => k.label === "売上高");
     expect(sales).toBeTruthy();
+    // 千円単位なら 1500000千円 = 15億円。兆円表示にはならないこと
     expect(sales?.value).not.toMatch(/兆円/);
   });
 
@@ -123,18 +127,23 @@ describe("disclosureScorer.classifyDocumentTitle", () => {
   it("「決算短信」は earnings_release", () => {
     expect(classifyDocumentTitle("2026年3月期 第1四半期決算短信")).toBe("earnings_release");
   });
+
   it("「業績予想の修正」は forecast_revision", () => {
     expect(classifyDocumentTitle("通期業績予想の修正に関するお知らせ")).toBe("forecast_revision");
   });
+
   it("「配当予想の修正」は dividend_revision", () => {
     expect(classifyDocumentTitle("配当予想の修正に関するお知らせ")).toBe("dividend_revision");
   });
-  it("単純な「配当」一般文書は other に分類される", () => {
+
+  it("「配当に関する規約変更」のような単純な「配当」マッチは other に分類される", () => {
     expect(classifyDocumentTitle("配当に関する内部規約改定について")).toBe("other");
   });
+
   it("「決算説明資料」は earnings_presentation", () => {
     expect(classifyDocumentTitle("2026年3月期 決算説明資料")).toBe("earnings_presentation");
   });
+
   it("「人事異動」は other", () => {
     expect(classifyDocumentTitle("代表取締役の異動に関するお知らせ")).toBe("other");
   });
