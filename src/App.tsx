@@ -13,16 +13,19 @@ import { fetchLatestDisclosureByTicker } from "./lib/disclosureFetcher";
 import { extractPdfText } from "./lib/pdfExtract";
 import { buildMarkdownReport } from "./lib/promptBuilder";
 import { analyzeDisclosureText } from "./lib/ruleAnalyzer";
+import { buildMetricsContext, buildStructuredReport, parseAiSummaryToStructured } from "./lib/structuredReport";
 import { extractXbrlMetrics, type XbrlExtractResult } from "./lib/xbrlExtract";
 import {
   clearHistory,
   deleteHistoryItem,
   estimateStorageSize,
+  getPdfTextCache,
   getSettings,
   listHistory,
   saveHistoryItem,
   saveLastTicker,
-  saveSettings
+  saveSettings,
+  setPdfTextCache
 } from "./lib/storage";
 import type { AnalysisReport, DisclosureFetchResult, DisclosureItem, FreeAiDigest, HistoryItem, LoadingStep } from "./lib/types";
 import { APP_BUILD_TAG, compactText, copyToClipboard, createId, createInitialSteps, formatDateTime, isValidTicker, normalizeTicker } from "./lib/utils";
@@ -43,8 +46,12 @@ const defaultFreeAiDigest: FreeAiDigest = {
 };
 
 function migrateReport(report: AnalysisReport): AnalysisReport {
-  if (report.freeAiDigest) return report;
-  return { ...report, freeAiDigest: defaultFreeAiDigest };
+  const withDigest = report.freeAiDigest ? report : { ...report, freeAiDigest: defaultFreeAiDigest };
+  // 旧バージョンで保存された履歴には structuredReport がないため、その場で生成する
+  if (!withDigest.structuredReport) {
+    return { ...withDigest, structuredReport: buildStructuredReport(withDigest) };
+  }
+  return withDigest;
 }
 
 function updateStepList(steps: LoadingStep[], id: number, status: LoadingStep["status"], detail?: string): LoadingStep[] {
@@ -90,9 +97,13 @@ function applyXbrlOverridesToReport(report: AnalysisReport, xbrl: XbrlExtractRes
     if (!incoming.length) return base;
     const map = new Map(base.map((r) => [r.label, r]));
     for (const r of incoming) map.set(r.label, r);
-    // 順序：売上高 → 営業利益 → 経常利益 → 純利益 を優先
+    // 順序：売上高 → 営業利益 → 経常利益 → 純利益 を優先（リスト外ラベルは末尾）
     const order = ["売上高", "営業利益", "経常利益", "純利益"];
-    return [...map.values()].sort((a, b) => order.indexOf(a.label) - order.indexOf(b.label));
+    const rank = (label: string) => {
+      const index = order.indexOf(label);
+      return index === -1 ? order.length : index;
+    };
+    return [...map.values()].sort((a, b) => rank(a.label) - rank(b.label));
   };
 
   if (xbrl.performance) {
@@ -116,6 +127,8 @@ function applyXbrlOverridesToReport(report: AnalysisReport, xbrl: XbrlExtractRes
     report.freeAiDigest.forecastMetrics = mergeRows(report.freeAiDigest.forecastMetrics, rows);
   }
   report.freeAiDigest.method = `${report.freeAiDigest.method} + XBRL直接抽出`;
+  // 数値が更新されたため構造化レポートを組み直す
+  report.structuredReport = buildStructuredReport(report);
 }
 
 function makeManualDisclosure(input: { url?: string; fileName?: string; ticker?: string; companyName?: string }): DisclosureItem {
@@ -287,14 +300,29 @@ export default function App() {
     const ownerController = abortRef.current; // この処理のcontrollerを記憶。新規開始でabortRefが差し替わった場合は finally で setProcessing(false) しない。
     try {
       setProcessing(true);
-      setStep(4, input instanceof File ? "success" : "processing", input instanceof File ? "手動PDFを使用" : "PDFを取得中");
-      if (!(input instanceof File)) addLog("PDF URLからPDF取得を開始しました");
 
-      const pdf = await extractPdfText(input, effectiveSignal);
+      // 保存済みの抽出テキストがあればPDFダウンロード自体を省略（安定化＋高速化）
+      const cachedPdf = typeof input === "string" ? getPdfTextCache(input) : undefined;
+      let pdf: Awaited<ReturnType<typeof extractPdfText>>;
+      if (cachedPdf) {
+        pdf = cachedPdf;
+        setStep(4, "success", "保存済み全文を採用（再ダウンロード省略）");
+        setStep(5, "success", `${pdf.totalPages}ページ / 抽出済みテキストを再利用`);
+        addLog("保存済みの抽出テキストを再利用しました");
+      } else {
+        setStep(4, input instanceof File ? "success" : "processing", input instanceof File ? "手動PDFを使用" : "PDFを取得中");
+        if (!(input instanceof File)) addLog("PDF URLからPDF取得を開始しました");
+
+        pdf = await extractPdfText(input, effectiveSignal);
+        setStep(4, "success", input instanceof File ? "手動PDFを使用" : "PDF取得完了");
+        setStep(5, "success", `${pdf.totalPages}ページ / 抽出 ${pdf.rawText.length.toLocaleString("ja-JP")}文字`);
+        addLog(`PDFテキスト抽出が完了しました（${pdf.totalPages}ページ）`);
+        // 次回以降の再分析用に抽出テキストを保存（十分な文字数が取れた場合のみ）
+        if (typeof input === "string" && pdf.rawText.replace(/\s/g, "").length >= 500) {
+          setPdfTextCache(input, pdf);
+        }
+      }
       setPdfWarnings(pdf.warnings);
-      setStep(4, "success", input instanceof File ? "手動PDFを使用" : "PDF取得完了");
-      setStep(5, "success", `${pdf.totalPages}ページ / 抽出 ${pdf.rawText.length.toLocaleString("ja-JP")}文字`);
-      addLog(`PDFテキスト抽出が完了しました（${pdf.totalPages}ページ）`);
 
       setStep(6, "processing", "重要語句を検出中");
       const nextReport = analyzeDisclosureText({
@@ -322,28 +350,45 @@ export default function App() {
         }
       }
 
-      // step 7: AI要約（有効かつWorker URL設定済みのときのみ実行）
-      if (settings.aiSummaryEnabled && settings.proxyUrl) {
+      // step 7: AI要約。外部Worker URL未設定でも同一オリジン /api/ai/summarize を自動利用する。
+      // AI基盤が未設定でも「失敗」扱いにせず、ルールベースの構造化レポートで続行する。
+      if (settings.aiSummaryEnabled) {
         setStep(7, "processing", "AI要約を生成中");
         addLog("Cloudflare Workers AI に要約をリクエストしました");
         const aiResult = await fetchAiSummary(
           settings.proxyUrl,
-          pdf.rawText,
-          nextReport.ticker,
-          nextReport.companyName,
-          disclosure.title,
+          {
+            text: pdf.rawText,
+            ticker: nextReport.ticker,
+            companyName: nextReport.companyName,
+            title: disclosure.title,
+            metrics: buildMetricsContext(nextReport)
+          },
           effectiveSignal
         );
         if (aiResult.ok && aiResult.summary) {
           nextReport.aiSummary = aiResult.summary;
-          setStep(7, "success", "AI要約完了");
+          const methodLabel = `Workers AI (${aiResult.model || "llama-3.1-8b"})`;
+          const structured = parseAiSummaryToStructured(aiResult.summary, methodLabel);
+          if (structured) {
+            if (structured.oneLine) {
+              nextReport.oneLineSummary = structured.oneLine;
+            } else {
+              structured.oneLine = nextReport.oneLineSummary;
+            }
+            nextReport.structuredReport = structured;
+          }
+          setStep(7, "success", `AI要約完了（${aiResult.model || "Workers AI"}）`);
           addLog("AI要約を取得しました");
+        } else if (aiResult.unavailable) {
+          setStep(7, "skipped", "AI未設定のため標準ルール分析を表示");
+          addLog(`AI要約は未設定のためスキップしました: ${aiResult.error || ""}`);
         } else {
-          setStep(7, "failed", aiResult.error || "AI要約に失敗");
+          setStep(7, "failed", "AI要約に失敗（標準ルール分析を表示）");
           addLog(`AI要約失敗: ${aiResult.error || "不明なエラー"}`);
         }
       } else {
-        setStep(7, "skipped", settings.aiSummaryEnabled ? "Worker URL未設定" : "AI要約OFF");
+        setStep(7, "skipped", "AI要約OFF");
       }
 
       setStep(8, "success", "標準レポート生成完了");
@@ -601,6 +646,7 @@ export default function App() {
           <HomePage
             latestHistory={latestHistory}
             isProcessing={processing}
+            steps={steps}
             onAnalyzeTicker={(ticker, companyName) => void handleAnalyzeTicker(ticker, companyName)}
             onAnalyzeFile={(file, ticker, companyName) => void handleAnalyzeFile(file, ticker, companyName)}
             onAnalyzeUrl={(url, ticker, companyName) => void handleAnalyzeUrl(url, ticker, companyName)}

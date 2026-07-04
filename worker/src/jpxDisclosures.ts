@@ -185,7 +185,7 @@ export async function lookupJpxDisclosures(
   input: { ticker: string; lookbackDays: number },
   fetchImpl: FetchLike = fetch
 ): Promise<{ companyName: string; disclosures: JpxDisclosureRecord[] }> {
-  if (!/^\d{4}$/.test(input.ticker)) throw new Error("invalid_ticker");
+  if (!/^[0-9][0-9A-Z]{3}$/.test(input.ticker)) throw new Error("invalid_ticker");
   const lookbackDays = Math.max(30, Math.min(365, Math.round(input.lookbackDays)));
   const cookieJar = new CookieJar();
   const commonHeaders = { "User-Agent": "Mozilla/5.0 kessan-tanshin-reader/1.0" };

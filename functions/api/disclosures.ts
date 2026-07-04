@@ -26,7 +26,7 @@ export async function onRequest(context: PagesContext): Promise<Response> {
   const url = new URL(request.url);
   const ticker = (url.searchParams.get("ticker") || "").trim();
   const lookbackDays = Number(url.searchParams.get("lookbackDays") || "120");
-  if (!/^\d{4}$/.test(ticker)) return jsonResponse({ ok: false, error: "invalid_ticker" }, 400);
+  if (!/^[0-9][0-9A-Z]{3}$/.test(ticker)) return jsonResponse({ ok: false, error: "invalid_ticker" }, 400);
   if (!Number.isFinite(lookbackDays)) return jsonResponse({ ok: false, error: "invalid_lookback" }, 400);
 
   const normalizedLookback = Math.max(30, Math.min(365, Math.round(lookbackDays)));

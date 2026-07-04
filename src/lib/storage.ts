@@ -1,9 +1,13 @@
-import type { AppSettings, DisclosureFetchResult, HistoryItem } from "./types";
+import { deflateSync, inflateSync, strFromU8, strToU8 } from "fflate";
+import type { AppSettings, DisclosureFetchResult, HistoryItem, PdfExtractResult } from "./types";
 
 export const SETTINGS_KEY = "kessan-reader-settings:v1";
 const HISTORY_KEY = "kessan-reader-history:v1";
 const DISCLOSURE_CACHE_PREFIX = "kessan-reader-disclosure-cache:v1:";
 const LAST_TICKER_KEY = "kessan-reader-last-ticker:v1";
+const PDF_TEXT_CACHE_PREFIX = "kessan-reader-pdftext:v1:";
+const PDF_TEXT_CACHE_LIMIT = 12;
+const PDF_TEXT_TTL_MS = 60 * 24 * 60 * 60 * 1000; // 60日
 
 export type LastTickerRecord = {
   ticker: string;
@@ -34,7 +38,8 @@ export const defaultSettings: AppSettings = {
   lookbackDays: 120,
   tdnetEnabled: true,
   proxyUrl: "",
-  aiSummaryEnabled: false
+  // AI基盤未設定でも安全にスキップされるため、既定でONにして構造化レポートを最大限活用する
+  aiSummaryEnabled: true
 };
 
 export function getSettings(): AppSettings {
@@ -137,4 +142,101 @@ export function getDisclosureCache(key: string, ttlMs = 10 * 60 * 1000): Disclos
 
 export function setDisclosureCache(key: string, value: DisclosureFetchResult): void {
   localStorage.setItem(`${DISCLOSURE_CACHE_PREFIX}${key}`, JSON.stringify({ storedAt: Date.now(), value }));
+}
+
+// ─── PDF抽出テキストの永続キャッシュ ────────────────────────────
+// 同じ資料の再分析時にPDFダウンロード＋テキスト抽出を丸ごと省略するための保存領域。
+// deflate圧縮＋base64でlocalStorageに保存する（決算短信全文はテキスト換算で数十KB程度）。
+
+function pdfCacheKey(pdfUrl: string): string {
+  // URLそのままだと長いので簡易ハッシュ化（FNV-1a）
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < pdfUrl.length; index += 1) {
+    hash ^= pdfUrl.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return `${PDF_TEXT_CACHE_PREFIX}${hash.toString(36)}`;
+}
+
+function compressToBase64(text: string): string {
+  const compressed = deflateSync(strToU8(text));
+  let binary = "";
+  const CHUNK = 0x8000;
+  for (let index = 0; index < compressed.length; index += CHUNK) {
+    binary += String.fromCharCode(...compressed.subarray(index, index + CHUNK));
+  }
+  return btoa(binary);
+}
+
+function decompressFromBase64(base64: string): string {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return strFromU8(inflateSync(bytes));
+}
+
+type PdfTextCacheEnvelope = {
+  storedAt: number;
+  pdfUrl: string;
+  payload: string; // deflate+base64 された PdfExtractResult JSON
+};
+
+export function getPdfTextCache(pdfUrl: string): PdfExtractResult | undefined {
+  try {
+    const raw = localStorage.getItem(pdfCacheKey(pdfUrl));
+    if (!raw) return undefined;
+    const envelope = JSON.parse(raw) as PdfTextCacheEnvelope;
+    if (envelope.pdfUrl !== pdfUrl) return undefined; // ハッシュ衝突時は不使用
+    if (Date.now() - envelope.storedAt > PDF_TEXT_TTL_MS) return undefined;
+    return JSON.parse(decompressFromBase64(envelope.payload)) as PdfExtractResult;
+  } catch {
+    return undefined;
+  }
+}
+
+function listPdfCacheKeys(): Array<{ key: string; storedAt: number }> {
+  const keys: Array<{ key: string; storedAt: number }> = [];
+  for (let index = 0; index < localStorage.length; index += 1) {
+    const key = localStorage.key(index);
+    if (!key || !key.startsWith(PDF_TEXT_CACHE_PREFIX)) continue;
+    try {
+      const envelope = JSON.parse(localStorage.getItem(key) || "{}") as PdfTextCacheEnvelope;
+      keys.push({ key, storedAt: envelope.storedAt || 0 });
+    } catch {
+      keys.push({ key, storedAt: 0 });
+    }
+  }
+  return keys;
+}
+
+export function setPdfTextCache(pdfUrl: string, result: PdfExtractResult): void {
+  try {
+    const envelope: PdfTextCacheEnvelope = {
+      storedAt: Date.now(),
+      pdfUrl,
+      payload: compressToBase64(JSON.stringify(result))
+    };
+    // 保存前に件数上限を超えないよう古いものから削除（LRU相当）
+    const existing = listPdfCacheKeys().sort((a, b) => a.storedAt - b.storedAt);
+    while (existing.length >= PDF_TEXT_CACHE_LIMIT) {
+      const oldest = existing.shift();
+      if (oldest) localStorage.removeItem(oldest.key);
+    }
+    localStorage.setItem(pdfCacheKey(pdfUrl), JSON.stringify(envelope));
+  } catch {
+    // 容量不足時は全PDFキャッシュを削って1回だけ再試行
+    try {
+      for (const item of listPdfCacheKeys()) localStorage.removeItem(item.key);
+      localStorage.setItem(
+        pdfCacheKey(pdfUrl),
+        JSON.stringify({ storedAt: Date.now(), pdfUrl, payload: compressToBase64(JSON.stringify(result)) } satisfies PdfTextCacheEnvelope)
+      );
+    } catch {
+      /* 保存できなくても分析自体は成立しているため黙って続行 */
+    }
+  }
+}
+
+export function clearPdfTextCache(): void {
+  for (const item of listPdfCacheKeys()) localStorage.removeItem(item.key);
 }

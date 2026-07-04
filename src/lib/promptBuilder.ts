@@ -1,4 +1,5 @@
 import type { AnalysisReport, SourceCheckpoint, TopicAnalysis, WarningItem } from "./types";
+import { structuredReportToText } from "./structuredReport";
 import { compactText, formatDateTime } from "./utils";
 
 export const DISCLAIMER =
@@ -101,6 +102,12 @@ export function buildMarkdownReport(report: AnalysisReport): string {
 **${dig.verdictLabel}**
 
 ${report.oneLineSummary}`);
+
+  if (report.structuredReport) {
+    sections.push(`## 決算分析レポート（${report.structuredReport.methodLabel}）
+
+${structuredReportToText(report.structuredReport)}`);
+  }
 
   if (metricsTable || forecastTable) {
     const blocks: string[] = ["## 主要数値"];

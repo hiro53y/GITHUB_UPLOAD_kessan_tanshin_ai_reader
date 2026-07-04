@@ -11,6 +11,7 @@ import type {
   WarningItem
 } from "./types";
 import { buildAiPrompt, DISCLAIMER } from "./promptBuilder";
+import { buildStructuredReport } from "./structuredReport";
 import { compactText, unique } from "./utils";
 
 const topicKeywords: Record<TopicCategory, string[]> = {
@@ -139,6 +140,9 @@ type FinancialDigestBase = {
   forecastMetrics: KeyMetricRow[];
   dividendLine?: string;
   forecastRevisionLine?: string;
+  marginLine?: string;
+  progressLines?: string[];
+  equityLine?: string;
 };
 
 function findKeywordPages(pages: Array<{ pageNumber: number; text: string }>, keywords: string[]): Array<{ pageNumber: number; keyword: string; text: string }> {
@@ -599,6 +603,48 @@ function parseFinancialDigest(rawText: string): FinancialDigestBase {
       ]
     : [];
 
+  // ─── アプリ側で確実に計算する派生指標（LLMに数値を捏造させないための土台） ───
+  const toNumber = (raw: string): number | undefined => {
+    const parsed = Number(raw.replace(/[△▲]/g, "-").replace(/,/g, "").trim());
+    return Number.isFinite(parsed) ? parsed : undefined;
+  };
+
+  // 営業利益率 = 営業利益 ÷ 売上高
+  let marginLine: string | undefined;
+  if (performance) {
+    const salesNum = toNumber(performance.sales);
+    const opNum = toNumber(performance.operatingProfit);
+    if (salesNum && opNum !== undefined && salesNum > 0) {
+      const margin = (opNum / salesNum) * 100;
+      if (margin > -100 && margin < 100) {
+        marginLine = `営業利益率は約${margin.toFixed(1)}%（${performance.operatingProfit}${unit}÷${performance.sales}${unit}）`;
+      }
+    }
+  }
+
+  // 通期予想に対する進捗率（四半期・中間決算のみ意味を持つ）
+  const progressLines: string[] = [];
+  if (performance && forecast && /四半期/.test(performance.period)) {
+    const pairs: Array<[string, string, string]> = [
+      ["売上高", performance.sales, forecast.sales],
+      ["営業利益", performance.operatingProfit, forecast.operatingProfit]
+    ];
+    for (const [label, actualRaw, forecastRaw] of pairs) {
+      const actual = toNumber(actualRaw);
+      const target = toNumber(forecastRaw);
+      if (actual !== undefined && target && target > 0) {
+        const progress = (actual / target) * 100;
+        if (progress > 0 && progress <= 150) {
+          progressLines.push(`${label}進捗率は${progress.toFixed(1)}%（${actualRaw}${unit}÷${forecastRaw}${unit}）`);
+        }
+      }
+    }
+  }
+
+  // 自己資本比率（%表記を直接抽出）
+  const equityMatch = text.match(/自己資本比率[^0-9△▲\-]{0,30}([0-9]{1,2}(?:\.[0-9])?)\s*[%％]/u);
+  const equityLine = equityMatch ? `自己資本比率は${equityMatch[1]}%` : undefined;
+
   const dividendLine = dividend
     ? `配当予想 ${dividend}${dividendRevision === "有" ? "（直近予想から修正あり）" : dividendRevision === "無" ? "（修正なし）" : ""}`
     : undefined;
@@ -624,7 +670,10 @@ function parseFinancialDigest(rawText: string): FinancialDigestBase {
     keyMetrics,
     forecastMetrics,
     dividendLine,
-    forecastRevisionLine
+    forecastRevisionLine,
+    marginLine,
+    progressLines: progressLines.length ? progressLines : undefined,
+    equityLine
   };
 }
 
@@ -666,12 +715,38 @@ function decideConfidence(rawTextLength: number, detectedTopics: number): Analys
   return "low";
 }
 
+/**
+ * 一言サマリー。増収/減収 × 増益/横ばい/減益 の組み合わせから
+ * 「増収だが営業利益は横ばい」のような自然な一文を生成する。
+ */
 function buildSummary(topics: TopicAnalysis[], warnings: WarningItem[], financialDigest: FinancialDigestBase): string {
-  // 数値パース成功時：判定 + 業績一行のみ（短く）
   if (financialDigest.performance) {
     const p = financialDigest.performance;
-    const judgement = verdictLabel(financialDigest.verdict || "unknown");
-    return `${judgement}。${p.period}は売上${growthPhrase(p.salesGrowth)}・営業利益${growthPhrase(p.operatingProfitGrowth)}・純利益${growthPhrase(p.netProfitGrowth)}。`;
+    const sales = growthNumber(p.salesGrowth) ?? 0;
+    const op = growthNumber(p.operatingProfitGrowth) ?? 0;
+    const net = growthNumber(p.netProfitGrowth) ?? 0;
+
+    const salesPhrase = sales > 1 ? "増収" : sales < -1 ? "減収" : "売上横ばい";
+    const opPhrase = op > 1 ? `営業利益${op.toFixed(1)}%増` : op < -1 ? `営業利益${Math.abs(op).toFixed(1)}%減` : "営業利益は横ばい";
+
+    let core: string;
+    if (sales > 1 && op > 1) core = `増収増益。売上${sales.toFixed(1)}%増・${opPhrase}`;
+    else if (sales > 1 && op >= -1) core = `増収だが${opPhrase}`;
+    else if (sales > 1) core = `増収減益。${opPhrase}`;
+    else if (sales < -1 && op < -1) core = `減収減益。売上${Math.abs(sales).toFixed(1)}%減・${opPhrase}`;
+    else if (sales < -1 && op > 1) core = `減収ながら増益。${opPhrase}`;
+    else if (op > 1) core = `${salesPhrase}ながら${opPhrase}`;
+    else if (op < -1) core = `${salesPhrase}、${opPhrase}`;
+    else core = "売上・利益とも横ばい圏";
+
+    // 純利益が営業利益と大きく乖離しているときは補足
+    const netNote =
+      Math.abs(net - op) >= 15 ? (net > op ? `、純利益は${net > 0 ? `${net.toFixed(1)}%増` : "改善"}` : `、純利益は${net < 0 ? `${Math.abs(net).toFixed(1)}%減` : "伸び悩み"}`) : "";
+
+    // 高レベル警告があれば1つだけ添える
+    const highWarning = warnings.find((w) => w.level === "high");
+    const tail = highWarning ? `。${highWarning.label}に注意` : "";
+    return `${core}${netNote}${tail}。`;
   }
 
   // 数値パース不可の場合
@@ -794,6 +869,9 @@ function buildFreeAiDigest(
     forecastMetrics: financialDigest.forecastMetrics,
     dividendLine: financialDigest.dividendLine,
     forecastRevisionLine: financialDigest.forecastRevisionLine,
+    marginLine: financialDigest.marginLine,
+    progressLines: financialDigest.progressLines,
+    equityLine: financialDigest.equityLine,
     method: "端末内キーワード解析（外部APIなし）"
   };
 }
@@ -825,7 +903,7 @@ export function analyzeDisclosureText(input: {
     textSample: compactText(rawText, 6000)
   });
 
-  return {
+  const report: AnalysisReport = {
     ticker: input.ticker || input.disclosure?.ticker,
     companyName: input.companyName || input.disclosure?.companyName,
     analyzedAt: new Date().toISOString(),
@@ -841,4 +919,6 @@ export function analyzeDisclosureText(input: {
     aiPrompt,
     disclaimer: DISCLAIMER
   };
+  report.structuredReport = buildStructuredReport(report);
+  return report;
 }

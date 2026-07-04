@@ -84,14 +84,11 @@ export function SettingsPanel({
               <span className={`absolute top-1 h-7 w-7 rounded-full bg-white transition ${settings.aiSummaryEnabled ? "left-8" : "left-1"}`} />
             </button>
           </div>
-          {settings.aiSummaryEnabled && !settings.proxyUrl ? (
-            <p className="rounded-xl bg-orange-50 p-3 text-sm leading-6 text-orange-700">
-              AI要約を使うには、上の「Cloudflare Workers proxy URL」にWorker URLを入力してください。Workers AIバインディングを有効にしたWorkerが必要です。
-            </p>
-          ) : null}
-          {settings.aiSummaryEnabled && settings.proxyUrl ? (
+          {settings.aiSummaryEnabled ? (
             <p className="rounded-xl bg-green-50 p-3 text-sm leading-6 text-green-700">
-              AI要約が有効です。分析時にCloudflare Workers AI（@cf/meta/llama-3.1-8b-instruct）で要約を生成します。
+              AI要約が有効です。分析時にCloudflare Workers AI（@cf/meta/llama-3.1-8b-instruct）で決算分析レポートを生成します。
+              Worker URL未設定でも、Pages側のAIバインディング（変数名: AI）が設定されていれば同一オリジンで動作します。
+              AI基盤が未設定の場合は自動的にスキップし、標準ルール分析のレポートを表示します。
             </p>
           ) : null}
         </div>

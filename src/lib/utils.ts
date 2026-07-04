@@ -2,7 +2,7 @@ import type { LoadingStep } from "./types";
 import { SETTINGS_KEY } from "./storage";
 
 /** アプリビルド表示用バージョン（変更時はここを更新するだけでヘッダ・設定の両方に反映） */
-export const APP_BUILD_TAG = "2026-06-25.1";
+export const APP_BUILD_TAG = "2026-07-04.1";
 
 export const TDNET_BASE_URL = "https://www.release.tdnet.info";
 export const TDNET_INBS_URL = `${TDNET_BASE_URL}/inbs/`;
@@ -21,8 +21,13 @@ export function tdnetCodeToTicker(value?: string): string | undefined {
   return normalized || undefined;
 }
 
+/**
+ * 銘柄コード形式チェック。
+ * 2024年以降の英字入りコード（例: 130A, 5588 → 285A）に対応するため、
+ * 「先頭が数字の英数字4桁」を許容する（従来は数字4桁のみでバグだった）。
+ */
 export function isValidTicker(value: string): boolean {
-  return /^\d{4}$/.test(normalizeTicker(value));
+  return /^[0-9][0-9A-Z]{3}$/.test(normalizeTicker(value));
 }
 
 export function formatDateTime(value?: string): string {
@@ -159,6 +164,47 @@ function decodeHtmlBytes(buffer: ArrayBuffer, contentType: string | null): strin
   }
 }
 
+/**
+ * 呼び出し元 signal と経路ごとのタイムアウトを合成した AbortSignal を作る。
+ * （AbortSignal.any は古いAndroid Chromeで未対応のため手動合成）
+ */
+function combineSignalWithTimeout(signal: AbortSignal | undefined, timeoutMs: number): { signal: AbortSignal; cleanup: () => void; didTimeout: () => boolean } {
+  const controller = new AbortController();
+  let timedOut = false;
+  const timer = window.setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+  const onOuterAbort = () => controller.abort();
+  signal?.addEventListener("abort", onOuterAbort);
+  return {
+    signal: controller.signal,
+    cleanup: () => {
+      window.clearTimeout(timer);
+      signal?.removeEventListener("abort", onOuterAbort);
+    },
+    didTimeout: () => timedOut
+  };
+}
+
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timer = window.setTimeout(resolve, ms);
+    signal?.addEventListener("abort", () => {
+      window.clearTimeout(timer);
+      reject(new DOMException("中断されました", "AbortError"));
+    });
+  });
+}
+
+/** ユーザー操作による中断かどうか（タイムアウトによる内部abortと区別する） */
+function isUserAbort(error: unknown, outerSignal?: AbortSignal, didTimeout?: boolean): boolean {
+  return error instanceof DOMException && error.name === "AbortError" && !didTimeout && Boolean(outerSignal?.aborted);
+}
+
+const TEXT_FETCH_TIMEOUT_MS = 20000;
+const PDF_FETCH_TIMEOUT_MS = 35000;
+
 export async function fetchTextWithFallback(
   url: string,
   initFactory?: () => RequestInit,
@@ -169,11 +215,12 @@ export async function fetchTextWithFallback(
 
   for (const attemptUrl of attempts) {
     if (signal?.aborted) throw new DOMException("中断されました", "AbortError");
+    const combined = combineSignalWithTimeout(signal, TEXT_FETCH_TIMEOUT_MS);
     try {
       const response = await fetch(attemptUrl, {
         cache: "no-store",
-        signal,
-        ...(initFactory ? initFactory() : undefined)
+        ...(initFactory ? initFactory() : undefined),
+        signal: combined.signal
       });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const buffer = await response.arrayBuffer();
@@ -184,28 +231,45 @@ export async function fetchTextWithFallback(
         via: attemptUrl === url ? "direct" : attemptUrl.startsWith("/tdnet") ? "dev-proxy" : "worker"
       };
     } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") throw error;
-      errors.push(`${attemptUrl}: ${error instanceof Error ? error.message : String(error)}`);
+      if (isUserAbort(error, signal, combined.didTimeout())) throw error;
+      const message = combined.didTimeout() ? `タイムアウト（${TEXT_FETCH_TIMEOUT_MS / 1000}秒）` : error instanceof Error ? error.message : String(error);
+      errors.push(`${attemptUrl}: ${message}`);
+    } finally {
+      combined.cleanup();
     }
   }
 
   throw new Error(errors.join(" / "));
 }
 
+/**
+ * PDFなどバイナリの取得。各経路にタイムアウトを設け、全経路失敗時は
+ * 少し待って全経路をもう1周リトライする（一時的なネットワーク断・レート制限対策）。
+ */
 export async function fetchArrayBufferWithFallback(url: string, signal?: AbortSignal): Promise<ArrayBuffer> {
   const attempts = buildAttempts(url);
   const errors: string[] = [];
+  const MAX_ROUNDS = 2;
 
-  for (const attemptUrl of attempts) {
-    if (signal?.aborted) throw new DOMException("中断されました", "AbortError");
-    try {
-      const response = await fetch(attemptUrl, { cache: "force-cache", signal });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      return await response.arrayBuffer();
-    } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") throw error;
-      errors.push(`${attemptUrl}: ${error instanceof Error ? error.message : String(error)}`);
+  for (let round = 1; round <= MAX_ROUNDS; round += 1) {
+    for (const attemptUrl of attempts) {
+      if (signal?.aborted) throw new DOMException("中断されました", "AbortError");
+      const combined = combineSignalWithTimeout(signal, PDF_FETCH_TIMEOUT_MS);
+      try {
+        const response = await fetch(attemptUrl, { cache: round === 1 ? "force-cache" : "no-store", signal: combined.signal });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const buffer = await response.arrayBuffer();
+        if (buffer.byteLength === 0) throw new Error("空のレスポンス");
+        return buffer;
+      } catch (error) {
+        if (isUserAbort(error, signal, combined.didTimeout())) throw error;
+        const message = combined.didTimeout() ? `タイムアウト（${PDF_FETCH_TIMEOUT_MS / 1000}秒）` : error instanceof Error ? error.message : String(error);
+        errors.push(`[${round}周目] ${attemptUrl}: ${message}`);
+      } finally {
+        combined.cleanup();
+      }
     }
+    if (round < MAX_ROUNDS) await sleep(1200, signal);
   }
 
   throw new Error(errors.join(" / "));

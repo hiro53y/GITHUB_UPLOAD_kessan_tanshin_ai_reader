@@ -1,3 +1,4 @@
+import { runAiSummarize, type AiSummarizeRequestBody } from "./aiSummarize";
 import { lookupJpxDisclosures } from "./jpxDisclosures";
 
 type Env = {
@@ -109,23 +110,6 @@ async function checkRateLimitDO(request: Request, env: Env): Promise<boolean> {
   }
 }
 
-const AI_SYSTEM_PROMPT = `あなたは決算短信（日本企業の四半期・通期決算発表資料）を読むための補助AIです。
-
-以下のルールを厳守してください:
-- 投資助言、売買推奨、目標株価、投資判断の断定を絶対に行わない
-- 将来の株価予測を行わない
-- 「買い」「売り」「保有」などの投資行動を推奨しない
-- 断定的な将来予測を避け、資料に記載された事実と企業側の見通しを区別して整理する
-
-以下の観点で日本語で簡潔に整理してください（各項目2-3文程度）:
-1. 売上・収益の状況
-2. 利益の状況
-3. 通期予想・業績予想の変更有無
-4. 配当方針
-5. 注意すべきリスクや特記事項
-
-最後に「※この要約はAIによる自動生成です。正確性は保証されません。投資判断は必ず原文を確認のうえ、ご自身の責任で行ってください。」と付記してください。`;
-
 async function handleAiSummarize(request: Request, env: Env): Promise<Response> {
   if (request.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders(request.headers.get("Origin") || "*") });
@@ -133,42 +117,16 @@ async function handleAiSummarize(request: Request, env: Env): Promise<Response> 
   if (request.method !== "POST") return jsonError("method_not_allowed", 405);
   if (!(await checkRateLimitDO(request, env))) return jsonError("rate_limited", 429);
 
-  let body: { text?: string; ticker?: string; companyName?: string; title?: string };
+  let body: AiSummarizeRequestBody;
   try {
-    body = await request.json() as typeof body;
+    body = await request.json() as AiSummarizeRequestBody;
   } catch {
     return jsonError("invalid_json", 400);
   }
 
-  if (!body.text || typeof body.text !== "string" || body.text.trim().length < 50) {
-    return jsonError("text_too_short", 400);
-  }
-
-  const trimmedText = body.text.slice(0, 6000);
-  const userPrompt = `以下は${body.companyName || "企業"}（銘柄コード: ${body.ticker || "不明"}）の決算短信「${body.title || "決算資料"}」から抽出したテキストです。上記のルールに従って要約してください。
-
-抽出テキスト:
-${trimmedText}`;
-
-  try {
-    const result = await env.AI.run("@cf/meta/llama-3.1-8b-instruct", {
-      messages: [
-        { role: "system", content: AI_SYSTEM_PROMPT },
-        { role: "user", content: userPrompt }
-      ],
-      max_tokens: 1024,
-      temperature: 0.3
-    });
-
-    if (!result.response) {
-      return jsonError("ai_no_response", 502);
-    }
-
-    return jsonOk({ summary: result.response });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return jsonError(`ai_error: ${message}`, 502);
-  }
+  const result = await runAiSummarize(env.AI, body);
+  if (!result.ok) return jsonError(result.error, result.status);
+  return jsonOk({ summary: result.summary, model: result.model });
 }
 
 async function handleProxy(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -237,7 +195,7 @@ async function handleDisclosures(request: Request, env: Env, ctx: ExecutionConte
   const requestUrl = new URL(request.url);
   const ticker = (requestUrl.searchParams.get("ticker") || "").trim();
   const lookbackDays = Number(requestUrl.searchParams.get("lookbackDays") || "120");
-  if (!/^\d{4}$/.test(ticker)) return jsonError("invalid_ticker", 400);
+  if (!/^[0-9][0-9A-Z]{3}$/.test(ticker)) return jsonError("invalid_ticker", 400);
   if (!Number.isFinite(lookbackDays)) return jsonError("invalid_lookback", 400);
 
   const normalizedLookback = Math.max(30, Math.min(365, Math.round(lookbackDays)));

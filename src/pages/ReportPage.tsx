@@ -5,6 +5,7 @@ import { WarningCard } from "../components/WarningCard";
 import { Card, OutlineButton, PrimaryButton, StatusBadge } from "../components/Card";
 import type { AnalysisReport, DisclosureFetchResult, KeyMetricRow } from "../lib/types";
 import { buildMarkdownReport } from "../lib/promptBuilder";
+import { buildStructuredReport, structuredReportToText } from "../lib/structuredReport";
 import { formatDateTime } from "../lib/utils";
 
 function verdictTone(verdict: AnalysisReport["freeAiDigest"]["verdict"]): "green" | "orange" | "red" | "gray" | "blue" {
@@ -85,6 +86,7 @@ export function ReportPage({
   }
 
   const dig = report.freeAiDigest;
+  const structured = report.structuredReport ?? buildStructuredReport(report);
   const markdown = buildMarkdownReport(report);
 
   // 詳細ビュー（変更なし、ただし冗長表示を整理）
@@ -161,10 +163,46 @@ export function ReportPage({
         </div>
       </Card>
 
-      {/* ── ② TL;DR：1〜2行で結論 ── */}
+      {/* ── ② 決算分析レポート（一言サマリー + 構造化セクション） ── */}
       <Card>
-        <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 text-base font-bold leading-7 text-slate-950">
-          {report.oneLineSummary}
+        <p className="text-xs text-slate-500">
+          作成日時: {formatDateTime(report.analyzedAt)} / 使用分析: {structured.methodLabel}
+        </p>
+        <div className="mt-2 rounded-xl border border-blue-200 bg-blue-50 p-4 text-base font-bold leading-7 text-slate-950">
+          一言サマリー: {structured.oneLine || report.oneLineSummary}
+        </div>
+        <div className="mt-4 space-y-4">
+          <div className="font-bold text-slate-950">【決算分析レポート】</div>
+          {structured.sections.map((section) => (
+            <div key={section.heading}>
+              <div className="font-bold leading-6 text-slate-950">{section.heading}</div>
+              <ul className="mt-1 space-y-1.5">
+                {section.items.map((item, index) => (
+                  <li key={`${section.heading}-${index}`} className="break-words text-sm leading-6 text-slate-800">
+                    {"・"}
+                    {item.label ? (
+                      <>
+                        <span className="font-bold text-slate-950">{item.label}</span>
+                        {": "}
+                      </>
+                    ) : null}
+                    {item.text}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </div>
+        {structured.generatedBy === "ai" ? (
+          <p className="mt-3 text-xs leading-5 text-slate-500">
+            ※ このレポートはWorkers AIによる自動生成です。数値・内容は必ず原文で確認してください。
+          </p>
+        ) : null}
+        <div className="mt-3">
+          <OutlineButton onClick={() => onCopy("決算分析レポート", structuredReportToText(structured))}>
+            <ClipboardCopy className="h-5 w-5" />
+            レポート本文をコピー
+          </OutlineButton>
         </div>
       </Card>
 
@@ -241,8 +279,8 @@ export function ReportPage({
         </Card>
       )}
 
-      {/* ── ⑦ Cloudflare Workers AI 要約（任意） ── */}
-      {report.aiSummary ? (
+      {/* ── ⑦ Workers AI 要約の原文（構造化パースに失敗した場合のみ表示） ── */}
+      {report.aiSummary && structured.generatedBy !== "ai" ? (
         <Card title="AI要約（Workers AI）">
           <div className="whitespace-pre-wrap rounded-xl border border-purple-200 bg-purple-50 p-3 text-sm leading-6 text-slate-800">{report.aiSummary}</div>
           <div className="mt-3">
