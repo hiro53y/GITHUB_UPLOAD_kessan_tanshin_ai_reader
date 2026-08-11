@@ -7,6 +7,7 @@ export const AI_MAX_PAGES = 24;
 export const AI_MAX_FACTS = 80;
 export const AI_MAX_EXCERPT_CHARS = 6000;
 export const AI_MAX_RESPONSE_BYTES = 64 * 1024;
+export const AI_TIMEOUT_MS = 60_000;
 
 export type AiCategory = (typeof AI_CATEGORIES)[number];
 export type AiPageExcerpt = { page: number; excerpt: string };
@@ -350,6 +351,35 @@ function failure(
   return { ok: false, status, error, validation: { valid: false, errors: Array.from(new Set(errors)) }, ...details };
 }
 
+function isAbortError(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "name" in error && error.name === "AbortError";
+}
+
+/** ユーザーの中断とendpoint単位のタイムアウトを1つのsignalへ合成する。 */
+function createEndpointAbortScope(outerSignal?: AbortSignal): {
+  signal: AbortSignal;
+  didTimeout: () => boolean;
+  cleanup: () => void;
+} {
+  const controller = new AbortController();
+  let timedOut = false;
+  const onOuterAbort = () => controller.abort(outerSignal?.reason);
+  if (outerSignal?.aborted) onOuterAbort();
+  else outerSignal?.addEventListener("abort", onOuterAbort, { once: true });
+  const timer = globalThis.setTimeout(() => {
+    timedOut = true;
+    controller.abort(new DOMException("AI要約がタイムアウトしました", "AbortError"));
+  }, AI_TIMEOUT_MS);
+  return {
+    signal: controller.signal,
+    didTimeout: () => timedOut,
+    cleanup: () => {
+      globalThis.clearTimeout(timer);
+      outerSignal?.removeEventListener("abort", onOuterAbort);
+    }
+  };
+}
+
 async function requestAiSummaryEndpoint(
   endpoint: string,
   input: AiSummaryInput,
@@ -357,26 +387,39 @@ async function requestAiSummaryEndpoint(
   expectedHash: string,
   signal?: AbortSignal
 ): Promise<AiSummaryResult> {
+  const abortScope = createEndpointAbortScope(signal);
   try {
     const response = await fetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(input),
-      signal
+      signal: abortScope.signal
     });
+    if (!response.ok) {
+      const unavailable = response.status === 404 || response.status === 501;
+      const error = unavailable
+        ? "AI要約基盤が設定されていません"
+        : response.status === 429
+          ? "AI要約のリクエスト上限に達しました"
+          : response.status === 413
+            ? "AI要約の入力が大きすぎます"
+            : `AI要約サービスが応答できませんでした (HTTP ${response.status})`;
+      if (unavailable) {
+        return failure(error, [`http_${response.status}`], "fallback", {
+          inputHash: expectedHash,
+          model: execution.model,
+          fallback: "rule_summary",
+          fallbackSummary: buildRuleFallbackSummary(input)
+        });
+      }
+      return failure(error, [`http_${response.status}`], "error", { inputHash: expectedHash, model: execution.model });
+    }
     let raw: unknown;
     try {
       raw = await readBoundedResponseJson(response);
-    } catch {
+    } catch (error) {
+      if (isAbortError(error)) throw error;
       return failure("AI要約サービスの応答形式が不正です", ["invalid_worker_response"], "error", { inputHash: expectedHash, model: execution.model });
-    }
-    if (!response.ok) {
-      const error = response.status === 429
-        ? "AI要約のリクエスト上限に達しました"
-        : response.status === 413
-          ? "AI要約の入力が大きすぎます"
-          : `AI要約サービスが応答できませんでした (HTTP ${response.status})`;
-      return failure(error, [`http_${response.status}`], "error", { inputHash: expectedHash, model: execution.model });
     }
     if (!isRecord(raw) || typeof raw.ok !== "boolean" || typeof raw.status !== "string") {
       return failure("AI要約サービスの応答形式が不正です", ["invalid_worker_response"], "error", { inputHash: expectedHash, model: execution.model });
@@ -432,8 +475,16 @@ async function requestAiSummaryEndpoint(
       model: execution.model
     };
   } catch (error) {
-    if (error instanceof Error && error.name === "AbortError") throw error;
+    if (signal?.aborted) {
+      if (isAbortError(error)) throw error;
+      throw new DOMException("中断されました", "AbortError");
+    }
+    if (abortScope.didTimeout()) {
+      return failure("AI要約が60秒以内に応答しませんでした", ["ai_request_failed"], "error", { inputHash: expectedHash, model: execution.model });
+    }
     return failure("AI要約リクエストに失敗しました", ["ai_request_failed"], "error", { inputHash: expectedHash, model: execution.model });
+  } finally {
+    abortScope.cleanup();
   }
 }
 

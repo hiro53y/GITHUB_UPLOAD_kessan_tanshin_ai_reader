@@ -49,7 +49,7 @@ Cloudflare PagesではNode.js 20系でビルドする前提です。`.node-versi
 
 MVPでは有料APIを使いません。外部LLM APIも使いません。
 
-Cloudflare Workers AI（無料枠）によるAI要約はオプション機能として利用できます。Cloudflare PagesのFunctionsへ `AI` バインディングを追加すれば同一オリジンの `/api/ai/summarize` を利用でき、外部Worker URLも指定できます。AI応答はページ根拠・数値・禁止表現・入力ハッシュを検証し、不合格時は標準ルール分析へ戻します。
+Cloudflare Workers AIによるAI要約はオプション機能として利用できます。同梱Workerをデプロイし、Cloudflare PagesへそのWorkerのService binding `AI_GATEWAY` を追加すると、同一オリジンの `/api/ai/summarize` を利用できます。Worker側ではDurable ObjectによりIP別・AI全体を各30回/60秒に制限し、制限基盤の障害時もAIだけはfail closedにします。bindingが無い環境では標準ルール分析へ戻ります。外部Worker URLを直接指定することもできます。AI応答はページ根拠・数値・禁止表現・入力ハッシュを検証し、不合格時は標準ルール分析へ戻します。
 
 ## TDnet・JPX公開ページ取得について
 

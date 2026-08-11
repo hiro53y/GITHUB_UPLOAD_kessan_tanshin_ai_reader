@@ -3,8 +3,16 @@ import { useRef, useState } from "react";
 import { DisclosureCandidateList } from "../components/DisclosureCandidateList";
 import { Card, DangerButton, OutlineButton, PrimaryButton, StatusBadge } from "../components/Card";
 import { LoadingSteps } from "../components/LoadingSteps";
-import type { DisclosureFetchResult, DisclosureItem, LoadingStep } from "../lib/types";
+import type { DisclosureFetchResult, DisclosureItem, DisclosureSource, LoadingStep } from "../lib/types";
 import { formatDateTime } from "../lib/utils";
+
+export function disclosureSourceLabel(source?: DisclosureSource): string {
+  if (source === "jpx-company-service") return "JPX 東証上場会社情報";
+  if (source === "company-ir") return "企業IR";
+  if (source === "manual") return "手動指定";
+  if (source === "tdnet-public") return "TDnet公開閲覧";
+  return "取得元不明";
+}
 
 export function FetchResultPage({
   fetchResult,
@@ -35,7 +43,7 @@ export function FetchResultPage({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const success = fetchResult?.status === "success";
   const failed = fetchResult && fetchResult.status !== "success";
-  const sourceLabel = fetchResult?.source === "jpx-company-service" ? "JPX 東証上場会社情報" : "TDnet公開閲覧";
+  const sourceLabel = disclosureSourceLabel(fetchResult?.source);
 
   return (
     <div className="space-y-4">

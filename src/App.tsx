@@ -80,8 +80,6 @@ export default function App() {
     undefined,
     () => createInitialAppState(getSettings(), listHistory(), createInitialSteps())
   );
-  const stateRef = useRef(state);
-  stateRef.current = state;
 
   const {
     active, settings, history, historyFilter, fetchResult,
@@ -106,11 +104,7 @@ export default function App() {
     if (typeof v === "function") dispatch({ type: "UPDATE_STEPS", payload: v });
     else dispatch({ type: "SET_STEPS", payload: v });
   };
-  type LogsUpdater = string[] | ((c: string[]) => string[]);
-  const setLogs = (v: LogsUpdater) => {
-    const next = typeof v === "function" ? v(stateRef.current.logs) : v;
-    dispatch({ type: "SET_LOGS", payload: next });
-  };
+  const setLogs = (v: string[]) => dispatch({ type: "SET_LOGS", payload: v });
   const setProcessing = (v: boolean) => dispatch({ type: "SET_PROCESSING", payload: v });
   const setToast = (v: string) => dispatch({ type: "SET_TOAST", payload: v });
   const setDetailReport = (v: boolean) => dispatch({ type: "SET_DETAIL_REPORT", payload: v });
@@ -182,7 +176,7 @@ export default function App() {
   }
 
   function addLog(message: string) {
-    setLogs((current) => [...current, `${new Date().toLocaleTimeString("ja-JP")} ${message}`]);
+    dispatch({ type: "PUSH_LOG", payload: `${new Date().toLocaleTimeString("ja-JP")} ${message}` });
   }
 
   function persistSettings(next: typeof settings) {
@@ -196,7 +190,12 @@ export default function App() {
     notify(ok ? `${label}をコピーしました` : `${label}のコピーに失敗しました`);
   }
 
-  function saveReportHistory(nextReport: AnalysisReport, nextFetchResult: DisclosureFetchResult | undefined, textSample: string) {
+  function saveReportHistory(
+    nextReport: AnalysisReport,
+    nextFetchResult: DisclosureFetchResult | undefined,
+    textSample: string,
+    nextPdfWarnings: string[]
+  ) {
     const markdown = buildMarkdownReport(nextReport);
     const item: HistoryItem = {
       id: createId("history"),
@@ -210,6 +209,7 @@ export default function App() {
       warningCount: nextReport.warnings.length,
       reportMarkdown: markdown,
       extractedTextSample: compactText(textSample, 1200),
+      pdfWarnings: nextPdfWarnings,
       status: "success",
       report: nextReport,
       fetchResult: nextFetchResult
@@ -223,14 +223,20 @@ export default function App() {
     }
   }
 
-  async function runPdfAnalysis(input: File | string, disclosure: DisclosureItem, sourceFetchResult?: DisclosureFetchResult, signal?: AbortSignal) {
+  async function runPdfAnalysis(
+    input: File | string,
+    disclosure: DisclosureItem,
+    sourceFetchResult?: DisclosureFetchResult,
+    signal?: AbortSignal,
+    bypassPdfCache = false
+  ) {
     const effectiveSignal = signal ?? startAbortController();
     const ownerController = abortRef.current; // この処理のcontrollerを記憶。新規開始でabortRefが差し替わった場合は finally で setProcessing(false) しない。
     try {
       setProcessing(true);
 
       // 保存済みの抽出テキストがあればPDFダウンロード自体を省略（安定化＋高速化）
-      const cachedPdf = typeof input === "string" ? getPdfTextCache(input) : undefined;
+      const cachedPdf = typeof input === "string" && !bypassPdfCache ? getPdfTextCache(input) : undefined;
       let pdf: Awaited<ReturnType<typeof extractPdfText>>;
       if (cachedPdf) {
         pdf = cachedPdf;
@@ -292,8 +298,12 @@ export default function App() {
         addLog("Cloudflare Workers AI に要約をリクエストしました");
         const requestedPages = Array.from(new Set([
           ...nextReport.sourceCheckpoints.map((item) => item.pageNumber),
-          ...Object.values(nextReport.financialFacts?.performance?.metrics ?? {}).flatMap((fact) => fact?.pageNumber ? [fact.pageNumber] : []),
-          ...Object.values(nextReport.financialFacts?.forecast?.metrics ?? {}).flatMap((fact) => fact?.pageNumber ? [fact.pageNumber] : [])
+          ...Object.values(nextReport.financialFacts?.performance?.metrics ?? {}).flatMap((fact) =>
+            [fact?.pageNumber, fact?.growthPageNumber].filter((page): page is number => typeof page === "number")
+          ),
+          ...Object.values(nextReport.financialFacts?.forecast?.metrics ?? {}).flatMap((fact) =>
+            [fact?.pageNumber, fact?.growthPageNumber].filter((page): page is number => typeof page === "number")
+          )
         ])).slice(0, 8);
         const selectedPages = (requestedPages.length
           ? requestedPages.flatMap((pageNumber) => pdf.pages.filter((page) => page.pageNumber === pageNumber))
@@ -351,7 +361,7 @@ export default function App() {
       setStep(8, "success", "標準レポート生成完了");
       setStep(9, "success", "完了");
       setReport(nextReport);
-      saveReportHistory(nextReport, sourceFetchResult, pdf.rawText);
+      saveReportHistory(nextReport, sourceFetchResult, pdf.rawText, pdf.warnings);
       setDetailReport(false);
       setActive("report");
       notify("分析レポートを生成しました");
@@ -458,7 +468,7 @@ export default function App() {
         return;
       }
 
-      await runPdfAnalysis(selected.pdfUrl, selected, result, tickerSignal);
+      await runPdfAnalysis(selected.pdfUrl, selected, result, tickerSignal, forceRefresh);
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") {
         return;
@@ -551,9 +561,11 @@ export default function App() {
 
   function openHistoryItem(item: HistoryItem) {
     if (item.report) {
-      setReport(migrateReport(item.report));
+      const migratedReport = migrateReport(item.report);
+      setReport(migratedReport);
       setFetchResult(item.fetchResult);
-      setSelectedDisclosure(item.report.sourceDisclosure);
+      setSelectedDisclosure(migratedReport.sourceDisclosure);
+      setPdfWarnings(item.pdfWarnings ?? []);
       setDetailReport(false);
       setActive("report");
     }
@@ -607,7 +619,7 @@ export default function App() {
             onAnalyzeTicker={(ticker, companyName) => void handleAnalyzeTicker(ticker, companyName)}
             onAnalyzeFile={(file, ticker, companyName) => void handleAnalyzeFile(file, ticker, companyName)}
             onAnalyzeUrl={(url, ticker, companyName) => void handleAnalyzeUrl(url, ticker, companyName)}
-            onOpenReport={() => setActive("report")}
+            onOpenReport={() => latestHistory?.report ? openHistoryItem(latestHistory) : setActive("report")}
             onOpenHistory={() => setActive("history")}
             onCopy={(label, text) => void copyText(label, text)}
           />

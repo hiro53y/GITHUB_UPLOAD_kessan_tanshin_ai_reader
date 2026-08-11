@@ -115,6 +115,9 @@ function toDisplay(value: string, unit: Unit | undefined, target: XbrlExtractRes
   return String(Math.round(n));
 }
 function factFor(facts: FactEntry[], aliases: readonly string[]) { return facts.find((fact) => aliases.includes(fact.element as never)); }
+function nonConsolidationDimensions(context: XbrlContext): string[] {
+  return context.dimensions.filter((dimension) => !/ConsolidatedOrNonConsolidatedAxis/i.test(dimension));
+}
 function rankedContexts(contexts: XbrlContext[], facts: FactEntry[], kind: ContextKind) {
   const candidates = contexts.filter((context) => context.kind === kind);
   return candidates.sort((a, b) => {
@@ -126,7 +129,10 @@ function rankedContexts(contexts: XbrlContext[], facts: FactEntry[], kind: Conte
       return Number.isFinite(start) && Number.isFinite(end) ? Math.max(0, end - start) : 0;
     };
     const durationPreference = kind === "current" || kind === "prior" ? durationDays(b) - durationDays(a) : 0;
-    return consolidationRank(b) - consolidationRank(a)
+    // セグメント・地域等のdimension付きcontextを全社総額として採らない。
+    // 連結/個別区分だけのdimensionは総額contextとして許容する。
+    return nonConsolidationDimensions(a).length - nonConsolidationDimensions(b).length
+      || consolidationRank(b) - consolidationRank(a)
       || durationPreference
       || score(b) - score(a)
       || b.endDate?.localeCompare(a.endDate ?? "")
@@ -152,13 +158,26 @@ function buildRow(kind: ContextKind, contexts: XbrlContext[], facts: FactEntry[]
   if (monetary.length < 3) uncertainty.push("同一contextで確認できる主要指標が3項目未満です");
   if (monetary.some((fact) => !unitForFact(fact, units)?.displayUnit)) uncertainty.push("unitRefがJPYとして確認できないため、値を自動換算していません");
   if (selected.consolidation === "unknown") uncertainty.push("連結・個別区分をcontextから確定できません");
+  if (nonConsolidationDimensions(selected).length) uncertainty.push("セグメント等のdimensionを含むcontextのため、全社値として確定できません");
   const value = (fact?: FactEntry) => fact ? toDisplay(fact.value, unitForFact(fact, units), displayUnit) : "";
   // 成長率factが存在しないことと、0%（横ばい）は別物。欠損を0で補完しない。
   const growth = (group: keyof typeof GROWTH_RATE_ELEMENTS) => pick(GROWTH_RATE_ELEMENTS[group])?.value ?? "";
   return { period: selected.endDate ?? selected.instant ?? "当期", sales: value(sales), salesGrowth: growth("sales"), operatingProfit: value(op), operatingProfitGrowth: growth("operatingProfit"), ordinaryProfit: value(ord), ordinaryProfitGrowth: growth("ordinaryProfit"), netProfit: value(net), netProfitGrowth: growth("netProfit"), source, context: selected.id, contextKind: kind, periodStart: selected.startDate, periodEnd: selected.endDate, instant: selected.instant, consolidation: selected.consolidation, quality: uncertainty.length ? "medium" : "high", uncertainty };
 }
 type SourceFile = { name: string; data: Uint8Array; kind: "xbrl" | "ixbrl" };
-function findSourceFile(entries: Record<string, Uint8Array>): SourceFile | undefined {
+type ParsedSourceFile = SourceFile & {
+  facts: FactEntry[];
+  contexts: XbrlContext[];
+  units: Unit[];
+  source: "summary" | "attachment";
+};
+type EvaluatedSourceFile = ParsedSourceFile & {
+  performance?: XbrlMetricRow;
+  prior?: XbrlMetricRow;
+  forecast?: XbrlMetricRow;
+};
+
+function findSourceFiles(entries: Record<string, Uint8Array>): SourceFile[] {
   const candidates = Object.entries(entries).flatMap(([name, data]): SourceFile[] => {
     if (/\.xbrl$/i.test(name)) return [{ name, data, kind: "xbrl" }];
     if (/\.(?:htm|html)$/i.test(name)) return [{ name, data, kind: "ixbrl" }];
@@ -169,21 +188,85 @@ function findSourceFile(entries: Record<string, Uint8Array>): SourceFile | undef
     if (summary) return summary;
     const nativeXbrl = Number(b.kind === "xbrl") - Number(a.kind === "xbrl");
     return nativeXbrl || a.name.localeCompare(b.name);
-  })[0];
+  });
+}
+
+function rowMetricCount(row: XbrlMetricRow | undefined): number {
+  if (!row) return 0;
+  return [row.sales, row.operatingProfit, row.ordinaryProfit, row.netProfit].filter((value) => value !== "").length;
+}
+
+function rowQualityRank(row: XbrlMetricRow | undefined): number {
+  return row?.quality === "high" ? 3 : row?.quality === "medium" ? 2 : row ? 1 : 0;
+}
+
+function selectBestRow(
+  files: EvaluatedSourceFile[],
+  select: (file: EvaluatedSourceFile) => XbrlMetricRow | undefined
+): { file: EvaluatedSourceFile; row: XbrlMetricRow } | undefined {
+  return files
+    .flatMap((file) => {
+      const row = select(file);
+      return row ? [{ file, row }] : [];
+    })
+    .sort((a, b) => rowQualityRank(b.row) - rowQualityRank(a.row)
+      || rowMetricCount(b.row) - rowMetricCount(a.row)
+      || Number(b.file.source === "summary") - Number(a.file.source === "summary")
+      || a.file.name.localeCompare(b.file.name))[0];
 }
 
 export async function extractXbrlMetrics(url: string, signal?: AbortSignal): Promise<XbrlExtractResult> {
   try {
-    const buffer = await fetchArrayBufferWithFallback(url, signal); const entries = unzipSync(new Uint8Array(buffer), { filter: (file) => /\.(xbrl|xml|htm|html)$/i.test(file.name) }); const target = findSourceFile(entries);
-    if (!target) return { ok: false, unit: "百万円", source: "none", error: "XBRL ファイルが zip 内に見つかりませんでした" };
-    const text = strFromU8(target.data); const document = parseDocument(text); const facts = target.kind === "ixbrl" ? parseIxbrl(text) : document.facts;
-    if (!facts.length) return { ok: false, unit: "百万円", source: "none", xbrlFileName: target.name, error: "XBRL/iXBRL fact が抽出できませんでした" };
-    const unit: XbrlExtractResult["unit"] = document.units.some((u) => u.displayUnit === "百万円") || facts.some((f) => f.unitRef === "JPY") ? "百万円" : "円";
-    const source = target.name.includes("Summary") ? "summary" : "attachment";
-    const performance = buildRow("current", document.contexts, facts, document.units, unit, source);
-    const prior = buildRow("prior", document.contexts, facts, document.units, unit, source);
-    const forecastRow = buildRow("forecastFull", document.contexts, facts, document.units, unit, source) ?? buildRow("forecastNext", document.contexts, facts, document.units, unit, source);
-    const forecast = forecastRow ? (({ period: _period, ...rest }) => rest)(forecastRow) : undefined;
-    return { ok: Boolean(performance || forecast), performance, prior, forecast, unit, xbrlFileName: target.name, source: performance || forecast ? source : "none", contexts: document.contexts };
+    const buffer = await fetchArrayBufferWithFallback(url, signal);
+    const entries = unzipSync(new Uint8Array(buffer), { filter: (file) => /\.(xbrl|xml|htm|html)$/i.test(file.name) });
+    const targets = findSourceFiles(entries);
+    if (!targets.length) return { ok: false, unit: "百万円", source: "none", error: "XBRL ファイルが zip 内に見つかりませんでした" };
+
+    const parsed: ParsedSourceFile[] = targets.flatMap((target) => {
+      const text = strFromU8(target.data);
+      const document = parseDocument(text);
+      const facts = target.kind === "ixbrl" ? parseIxbrl(text) : document.facts;
+      if (!facts.length) return [];
+      return [{
+        ...target,
+        facts,
+        contexts: document.contexts,
+        units: document.units,
+        source: /Summary/i.test(target.name) ? "summary" as const : "attachment" as const
+      }];
+    });
+    if (!parsed.length) return { ok: false, unit: "百万円", source: "none", xbrlFileName: targets[0].name, error: "XBRL/iXBRL fact が抽出できませんでした" };
+
+    // 採用候補間で単位を統一する。JPYを確認できる候補は全て百万円表示へ正規化する。
+    const unit: XbrlExtractResult["unit"] = parsed.some((file) =>
+      file.units.some((item) => item.displayUnit === "百万円") || file.facts.some((fact) => fact.unitRef === "JPY")
+    ) ? "百万円" : "円";
+    const evaluated: EvaluatedSourceFile[] = parsed.map((file) => ({
+      ...file,
+      performance: buildRow("current", file.contexts, file.facts, file.units, unit, file.source),
+      prior: buildRow("prior", file.contexts, file.facts, file.units, unit, file.source),
+      forecast: buildRow("forecastFull", file.contexts, file.facts, file.units, unit, file.source)
+        ?? buildRow("forecastNext", file.contexts, file.facts, file.units, unit, file.source)
+    }));
+
+    // Summaryを無条件に固定せず、品質→主要指標の完全性→Summaryの順で選ぶ。
+    // これにより不完全なSummaryしかない場合は完全なAttachmentへ安全にfallbackする。
+    const selectedPerformance = selectBestRow(evaluated, (file) => file.performance);
+    const selectedPrior = selectBestRow(evaluated, (file) => file.prior);
+    const selectedForecast = selectBestRow(evaluated, (file) => file.forecast);
+    const performance = selectedPerformance?.row;
+    const prior = selectedPrior?.row;
+    const forecast = selectedForecast?.row
+      ? (({ period: _period, ...rest }) => rest)(selectedForecast.row)
+      : undefined;
+    const selected = [selectedPerformance, selectedForecast].filter(Boolean) as Array<{ file: EvaluatedSourceFile; row: XbrlMetricRow }>;
+    const selectedSources = new Set(selected.map((item) => item.file.source));
+    const source: XbrlExtractResult["source"] = !selected.length
+      ? "none"
+      : selectedSources.size > 1 ? "mixed" : selected[0].file.source;
+    const selectedFiles = Array.from(new Set([selectedPerformance?.file, selectedPrior?.file, selectedForecast?.file].filter(Boolean) as EvaluatedSourceFile[]));
+    const xbrlFileName = selectedFiles.map((file) => file.name).join(" + ") || parsed[0].name;
+    const contexts = selectedFiles.flatMap((file) => file.contexts);
+    return { ok: Boolean(performance || forecast), performance, prior, forecast, unit, xbrlFileName, source, contexts };
   } catch (error) { if (error instanceof DOMException && error.name === "AbortError") throw error; return { ok: false, unit: "百万円", source: "none", error: error instanceof Error ? error.message : String(error) }; }
 }

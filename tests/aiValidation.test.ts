@@ -8,6 +8,8 @@ import {
   type AiSummaryInput
 } from "../src/lib/aiSummarizer";
 
+const { onRequest: onPagesAiRequest } = await vi.importActual<any>("../functions/api/ai/summarize");
+
 const input: AiSummaryInput = {
   pages: [{ page: 2, excerpt: "売上高 1,200 百万円、営業利益 100 百万円" }],
   facts: [{ label: "売上高", value: "1,200百万円", page: 2 }]
@@ -22,15 +24,16 @@ const valid: AiStructuredSummary = {
   }]
 };
 
-function createWorkerEnv(aiResponse: unknown) {
+function createWorkerEnv(aiResponse: unknown, rateAllowed = true) {
   const run = vi.fn(async () => ({ response: JSON.stringify(aiResponse) }));
+  const rateFetch = vi.fn(async () => new Response(JSON.stringify({ allowed: rateAllowed })));
   const rateLimiter = {
-    idFromName: vi.fn(() => ({ name: "test" })),
+    idFromName: vi.fn((name: string) => ({ name })),
     get: vi.fn(() => ({
-      fetch: vi.fn(async () => new Response(JSON.stringify({ allowed: true })))
+      fetch: rateFetch
     }))
   };
-  return { env: { AI: { run }, RATE_LIMITER: rateLimiter }, run };
+  return { env: { AI: { run }, RATE_LIMITER: rateLimiter }, run, rateLimiter, rateFetch };
 }
 
 async function postToWorker(body: unknown, env: unknown): Promise<Response> {
@@ -145,5 +148,90 @@ describe("Workers AI応答契約", () => {
       error: "invalid_ai_input",
       validation: { valid: false, errors: ["input_invalid"] }
     });
+  });
+
+  it("AIはIP別と全体上限をfail closedで確認してから推論する", async () => {
+    const { env, run, rateLimiter } = createWorkerEnv(valid, false);
+    const response = await postToWorker(input, env);
+
+    expect(response.status).toBe(429);
+    expect(response.headers.get("Retry-After")).toBe("60");
+    expect(rateLimiter.idFromName).toHaveBeenCalledWith("ai-ip:unknown");
+    expect(rateLimiter.idFromName).toHaveBeenCalledWith("ai-global");
+    expect(run).not.toHaveBeenCalled();
+  });
+});
+
+describe("Pages AI同一origin境界", () => {
+  const pagesRequest = () => new Request("https://pages.example/api/ai/summarize", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Origin": "https://pages.example" },
+    body: JSON.stringify(input)
+  });
+
+  it("AI binding未設定でもcross-originを先に拒否する", async () => {
+    const response = await onPagesAiRequest({
+      request: new Request("https://pages.example/api/ai/summarize", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Origin": "https://attacker.example" },
+        body: JSON.stringify(input)
+      }),
+      env: {}
+    });
+
+    expect(response.status).toBe(403);
+    expect(response.headers.get("Access-Control-Allow-Origin")).toBeNull();
+    expect(await response.json()).toMatchObject({ ok: false, error: "origin_not_allowed" });
+  });
+
+  it("同一originのpreflightだけにそのoriginを返す", async () => {
+    const response = await onPagesAiRequest({
+      request: new Request("https://pages.example/api/ai/summarize", {
+        method: "OPTIONS",
+        headers: { "Origin": "https://pages.example" }
+      }),
+      env: {}
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Access-Control-Allow-Origin")).toBe("https://pages.example");
+    expect(response.headers.get("Vary")).toBe("Origin");
+  });
+
+  it("AI Gateway service bindingが無い環境ではfail closedにする", async () => {
+    const response = await onPagesAiRequest({ request: pagesRequest(), env: {} });
+
+    expect(response.status).toBe(501);
+    expect(await response.json()).toMatchObject({ error: "ai_gateway_binding_missing" });
+  });
+
+  it("Gatewayの429とRetry-Afterを同一origin応答へ引き継ぐ", async () => {
+    const fetch = vi.fn(async () => new Response(JSON.stringify({ ok: false, error: "rate_limited" }), {
+      status: 429,
+      headers: { "Content-Type": "application/json", "Retry-After": "60" }
+    }));
+    const response = await onPagesAiRequest({
+      request: pagesRequest(),
+      env: { AI_GATEWAY: { fetch } }
+    });
+
+    expect(response.status).toBe(429);
+    expect(response.headers.get("Retry-After")).toBe("60");
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("Pages AIはbounded入力をDO保護済みGatewayへだけ委譲する", async () => {
+    const fetch = vi.fn(async () => new Response(JSON.stringify({ ok: true, status: "validated", structured: valid }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    }));
+    const response = await onPagesAiRequest({
+      request: pagesRequest(),
+      env: { AI_GATEWAY: { fetch } }
+    });
+
+    expect(response.status).toBe(200);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(await response.json()).toMatchObject({ ok: true, status: "validated" });
   });
 });

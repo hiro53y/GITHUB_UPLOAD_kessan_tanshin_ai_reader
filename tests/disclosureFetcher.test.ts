@@ -43,6 +43,27 @@ describe("資料候補の統合と決定的選定", () => {
       .toBeGreaterThan(candidates.find((item) => item.id === "a")!.score);
   });
 
+  it("古い四半期の訂正版より最新四半期の決算短信を優先する", () => {
+    const candidates = [
+      disclosure({
+        id: "latest",
+        disclosedAt: "2026-08-11T00:00:00+09:00",
+        title: "2027年3月期 第1四半期決算短信"
+      }),
+      disclosure({
+        id: "old-correction",
+        disclosedAt: "2025-02-10T00:00:00+09:00",
+        title: "2025年3月期 第3四半期決算短信（訂正）"
+      })
+    ].map((item) => scoreDisclosure(item, {
+      ticker: "7203",
+      newestDateMs: Date.parse("2026-08-11T00:00:00+09:00"),
+      oldestDateMs: Date.parse("2025-01-01T00:00:00+09:00")
+    }));
+
+    expect(selectBestDisclosure(candidates, "7203")?.id).toBe("latest");
+  });
+
   it("同一タイトル・同一日でも書類IDが異なれば統合せず、訂正版を残す", () => {
     const original = disclosure({ id: "140120260508500001", title: "2026年3月期 決算短信" });
     const correction = disclosure({ id: "140120260508500002", title: "2026年3月期 決算短信（訂正）" });

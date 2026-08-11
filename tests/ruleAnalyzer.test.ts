@@ -166,6 +166,34 @@ describe("ruleAnalyzer - 警告検出", () => {
     expect(labels).not.toContain("赤字・損失");
   });
 
+  it("減益・下方修正を明示的に否定した文を警告にしない", () => {
+    const report = analyzeDisclosureText({ pages: [{
+      pageNumber: 1,
+      text: "当社は減益ではありません。通期予想の下方修正は行っておりません。"
+    }] });
+    const labels = report.warnings.map((warning) => warning.label);
+    expect(labels).not.toContain("減益");
+    expect(labels).not.toContain("下方修正");
+  });
+
+  it("別対象の否定で実際の下方修正警告を消さない", () => {
+    const report = analyzeDisclosureText({ pages: [{
+      pageNumber: 1,
+      text: "業績予想を下方修正しましたが、配当予想の修正は行っておりません。"
+    }] });
+    expect(report.warnings.map((warning) => warning.label)).toContain("下方修正");
+  });
+
+  it("主格助詞のがを対比境界と誤認せず同じ節の否定を認識する", () => {
+    const report = analyzeDisclosureText({ pages: [{
+      pageNumber: 1,
+      text: "減益が発生していません。営業損失が発生していません。"
+    }] });
+    const labels = report.warnings.map((warning) => warning.label);
+    expect(labels).not.toContain("減益");
+    expect(labels).not.toContain("赤字・損失");
+  });
+
   it("後段の円単位表ではなく、主要業績表直前の百万円単位を採用する", () => {
     const report = analyzeDisclosureText({ pages: [{ pageNumber: 1, text: `
 （単位：百万円）
@@ -188,6 +216,11 @@ describe("ruleAnalyzer - 警告検出", () => {
 
   it("連結短信の後段に個別決算の参考情報があっても連結として扱う", () => {
     const report = analyzeDisclosureText({ pages: [{ pageNumber: 1, text: `${fixtureFullYear}\n参考：個別決算の概要` }] });
+    expect(report.financialFacts?.performance?.consolidation).toBe("consolidated");
+  });
+
+  it("タイトルが連結なら後段の括弧付き参考個別欄で個別へ反転しない", () => {
+    const report = analyzeDisclosureText({ pages: [{ pageNumber: 1, text: `${fixtureFullYear}\n（参考）個別業績の概要（個別）` }] });
     expect(report.financialFacts?.performance?.consolidation).toBe("consolidated");
   });
 

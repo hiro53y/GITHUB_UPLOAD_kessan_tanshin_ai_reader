@@ -1,3 +1,10 @@
+import {
+  fetchWithValidatedRedirects,
+  isPrivateHostname,
+  ProxyRequestError,
+  readBoundedProxyBody
+} from "../lib/proxySecurity";
+
 const DEFAULT_ALLOWED_HOSTS = ["www.release.tdnet.info", "release.tdnet.info", "www2.jpx.co.jp"];
 const RATE_WINDOW_MS = 60_000;
 const RATE_LIMIT = 60;
@@ -22,34 +29,15 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 function allowedHosts(env: Record<string, unknown>): string[] {
-  const extra = typeof env.ALLOWED_EXTRA_HOSTS === "string" ? env.ALLOWED_EXTRA_HOSTS.split(",").map((host) => host.trim()).filter(Boolean) : [];
+  const extra = typeof env.ALLOWED_EXTRA_HOSTS === "string"
+    ? env.ALLOWED_EXTRA_HOSTS.split(",").map((host) => host.trim().toLowerCase()).filter(Boolean)
+    : [];
   return [...DEFAULT_ALLOWED_HOSTS, ...extra];
 }
 
-/** プライベート/内部宛先（SSRF対策）。localhost・RFC1918・リンクローカル・メタデータIP等を弾く。 */
-function isPrivateHost(hostname: string): boolean {
-  const host = hostname.toLowerCase();
-  if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".internal") || host.endsWith(".local")) return true;
-  // IPv4 リテラルの場合のみ数値判定（ドメイン名は誤判定しない）
-  const m = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
-  if (m) {
-    const [a, b] = [Number(m[1]), Number(m[2])];
-    if (a === 10) return true;
-    if (a === 127) return true;
-    if (a === 0) return true;
-    if (a === 169 && b === 254) return true; // link-local / クラウドメタデータ
-    if (a === 172 && b >= 16 && b <= 31) return true;
-    if (a === 192 && b === 168) return true;
-    if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT
-  }
-  // IPv6 ループバック/リンクローカル/ユニークローカル
-  if (host === "[::1]" || host === "::1" || host.startsWith("[fe80:") || host.startsWith("[fc") || host.startsWith("[fd")) return true;
-  return false;
-}
-
 function isAllowedTarget(target: URL, method: string, env: Record<string, unknown>): boolean {
-  if (allowedHosts(env).includes(target.hostname)) return true;
-  if (isPrivateHost(target.hostname)) return false;
+  if (target.protocol !== "https:" || isPrivateHostname(target.hostname)) return false;
+  if (allowedHosts(env).includes(target.hostname.toLowerCase())) return true;
   return method === "GET" && target.protocol === "https:" && target.pathname.toLowerCase().endsWith(".pdf");
 }
 
@@ -115,25 +103,23 @@ export async function onRequest(context: ProxyContext): Promise<Response> {
     headers.set("Accept-Language", "ja,en;q=0.9");
     headers.set("Referer", `${target.protocol}//${target.host}/`);
 
-    const bodyText = request.method === "POST" ? await request.text() : undefined;
-
-    const upstream = await fetch(target.toString(), {
-      method: request.method,
+    const method = request.method as "GET" | "POST";
+    const bodyText = method === "POST" ? await readBoundedProxyBody(request) : undefined;
+    const upstream = await fetchWithValidatedRedirects({
+      url: target,
+      method,
       headers,
       body: bodyText,
-      cf: request.method === "GET" ? { cacheTtl: 300, cacheEverything: true } : undefined
-    } as RequestInit);
+      isAllowed: (url, nextMethod) => isAllowedTarget(url, nextMethod, env),
+      init: method === "GET" ? { cf: { cacheTtl: 300, cacheEverything: true } } : undefined
+    });
 
     const response = withCors(upstream);
     if (request.method === "GET" && upstream.ok) context.waitUntil?.(cache.put(cacheKey, response.clone()));
     return response;
   } catch (error) {
-    return jsonResponse(
-      {
-        error: "proxy_fetch_failed",
-        message: error instanceof Error ? error.message : String(error)
-      },
-      502
-    );
+    if (error instanceof ProxyRequestError) return jsonResponse({ error: error.message }, error.status);
+    // 上流例外にはURL・認証情報・実行環境の詳細が含まれ得るため、外部応答へ露出しない。
+    return jsonResponse({ error: "proxy_fetch_failed" }, 502);
   }
 }

@@ -147,6 +147,7 @@ type FinancialDigestBase = {
   unit: AmountUnit;
   dividendAnnual?: string;
   dividendYearEnd?: string;
+  dividendPage?: number;
 };
 
 function findKeywordPages(pages: Array<{ pageNumber: number; text: string }>, keywords: string[]): Array<{ pageNumber: number; keyword: string; text: string }> {
@@ -214,13 +215,20 @@ function warningOccurrenceIsActionable(text: string, keyword: string, label: str
     // 「該当なし」の注記見出しや、リスクが後退・解消した記述は警告にしない。
     const explicitAbsence = (label === "継続企業の前提" || label === "重要な後発事象")
       && /該当事項(?:は)?(?:ありません|ございません|なし)|該当なし|該当事項なし/u.test(compactSection);
-    const explicitlyNegated = new RegExp(`${keyword}(?:に関する(?:事項|注記)?)?(?:は|が|を)?(?:ありません|ございません|ない|なし)`, "u").test(compactContext);
+    const explicitlyNegated = new RegExp(`${keyword}(?:に関する(?:事項|注記)?)?(?:(?:で|と)?は|が|を)?(?:ありません|ございません|ない|なし)`, "u").test(compactContext);
     const sentenceStart = Math.max(text.lastIndexOf("。", index), text.lastIndexOf("\n", index)) + 1;
     const periodEnd = text.indexOf("。", index);
     const sentenceEnd = periodEnd < 0 ? Math.min(text.length, index + keyword.length + 160) : periodEnd + 1;
     const compactSentence = text.slice(sentenceStart, sentenceEnd).replace(/[\s　]+/g, "");
-    const deniedInSentence = compactSentence.includes(keyword)
-      && /(?:計上|発生|存在|該当|見込|予定)(?:し|して)?(?:おりません|いません|ません|ない|なし)/u.test(compactSentence);
+    // 「Aは下方修正したが、Bは行っていない」のような対比では、Bの否定をAへ波及させない。
+    const keywordClauses = compactSentence
+      // 主格助詞の「が」（例: 減益が発生していない）は区切らず、対比の「が、」だけを境界にする。
+      .split(/(?:が[、,]|ものの[、,]?|一方(?:で)?[、,]?|ただし[、,]?|しかし[、,]?|[；;])/u)
+      .filter((clause) => clause.includes(keyword));
+    const deniedInSentence = keywordClauses.some((clause) =>
+      /(?:計上|発生|存在|該当|見込|予定|実施)(?:は|を)?(?:し|して)?(?:おりません|いません|ません|ない|なし|ありません)/u.test(clause)
+      || /行(?:い|って|わ)?(?:おりません|いません|ません|ない)/u.test(clause)
+    );
     const uncertaintyReceded = label === "不確実性" && /不確実性(?:が|は)?(?:後退|低下|縮小|解消)/u.test(compactContext);
 
     if (!tableOfContentsEntry && !explicitAbsence && !explicitlyNegated && !deniedInSentence && !uncertaintyReceded) return true;
@@ -565,7 +573,54 @@ function parseForecastByLabels(text: string): ForecastMetricRow | undefined {
   };
 }
 
-function parseFinancialDigest(rawText: string): FinancialDigestBase {
+function parseDividendPrediction(
+  pages: Array<{ pageNumber: number; text: string }>
+): { annual?: string; yearEnd?: string; pageNumber?: number } {
+  const predictionPattern = /20\d{2}年[0-9０-９]+月期\s*[（(]\s*予想\s*[）)]([^\n]{0,240})/gu;
+  const hasDividendContext = (text: string, index: number): boolean => {
+    const prefix = text.slice(Math.max(0, index - 800), index);
+    const dividendIndex = Math.max(
+      prefix.lastIndexOf("配当"),
+      prefix.lastIndexOf("1株当たり"),
+      prefix.lastIndexOf("１株当たり")
+    );
+    if (dividendIndex < 0) return false;
+    // 同じページに業績予想表と配当表がある場合、候補行の直前にある節を優先する。
+    const performanceIndex = Math.max(
+      prefix.lastIndexOf("業績予想"),
+      prefix.lastIndexOf("経営成績"),
+      prefix.lastIndexOf("売上高")
+    );
+    return dividendIndex >= performanceIndex;
+  };
+
+  for (const page of pages) {
+    for (const match of page.text.matchAll(predictionPattern)) {
+      if (!hasDividendContext(page.text, match.index)) continue;
+      const values = Array.from(match[1].matchAll(/([△▲\-]?\d[\d,]*(?:\.\d+)?)/gu)).map((value) => value[1]);
+      if (values.length >= 2) {
+        return { yearEnd: values.at(-2), annual: values.at(-1), pageNumber: page.pageNumber };
+      }
+    }
+  }
+
+  // 行構造が失われたPDF向けfallbackもページ単位で行い、品質判定するページを
+  // 数値の抽出元からずらさない。
+  for (const page of pages) {
+    for (const match of page.text.matchAll(predictionPattern)) {
+      if (!hasDividendContext(page.text, match.index)) continue;
+      const segment = page.text
+        .slice(Math.max(0, match.index - 400), Math.min(page.text.length, match.index + match[0].length + 400))
+        .replace(/[　\s]+/g, " ");
+      const yearEnd = findValueAfter(segment, "期末")?.value;
+      const annual = findValueAfter(segment, "年間")?.value ?? findValueAfter(segment, "合計")?.value;
+      if (yearEnd || annual) return { yearEnd, annual, pageNumber: page.pageNumber };
+    }
+  }
+  return {};
+}
+
+function parseFinancialDigest(rawText: string, pages: Array<{ pageNumber: number; text: string }>): FinancialDigestBase {
   const text = rawText.replace(/[　\s]+/g, " ");
   const unit = detectAmountUnit(rawText);
   const metricValue = "([△▲\\-]?\\d[\\d,]*(?:\\.\\d+)?)";
@@ -612,26 +667,11 @@ function parseFinancialDigest(rawText: string): FinancialDigestBase {
 
   const forecastRevision = text.match(/業績予想からの修正の有無[:：]\s*([有無])/u)?.[1];
   const dividendRevision = text.match(/配当予想からの修正の有無[:：]\s*([有無])/u)?.[1];
-  // 配当：5値（第1Q/第2Q/第3Q/期末/年間）が並ぶ表になるため、最初2値で代用すると致命的に誤る。
-  // 「期末」「年間」のラベル直後の数値を個別に拾う。
-  const dividendSegment = (() => {
-    // 配当予想行が含まれるブロックを限定（「20XX年X月期（予想）」近傍）
-    const m = text.match(/20\d{2}年[0-9０-９]+月期\s*[（(]\s*予想\s*[）)][\s\S]{0,400}/u);
-    return m ? m[0] : text;
-  })();
-  // 座標復元済みテキストでは「期末・合計」の見出しと予想行が別行になる。
-  // 予想行の末尾2値を期末・年間として優先し、従来の見出し近傍抽出をfallbackにする。
-  const dividendPredictionLine = rawText.match(/20\d{2}年[0-9０-９]+月期\s*[（(]\s*予想\s*[）)]([^\n]{0,240})/u)?.[1];
-  const dividendPredictionValues = dividendPredictionLine
-    ? Array.from(dividendPredictionLine.matchAll(/([△▲\-]?\d[\d,]*(?:\.\d+)?)/gu)).map((match) => match[1])
-    : [];
-  const dividendYearEnd = dividendPredictionValues.length >= 2
-    ? dividendPredictionValues.at(-2)
-    : findValueAfter(dividendSegment, "期末")?.value;
-  const dividendAnnual = dividendPredictionValues.length >= 2
-    ? dividendPredictionValues.at(-1)
-    : findValueAfter(dividendSegment, "年間")?.value
-      ?? findValueAfter(dividendSegment, "合計")?.value;
+  // 配当：5値（第1Q/第2Q/第3Q/期末/年間）が並ぶため末尾2値を使い、
+  // 同時に抽出元ページを保持して、そのページの品質だけで採否を決める。
+  const dividendPrediction = parseDividendPrediction(pages);
+  const dividendYearEnd = dividendPrediction.yearEnd;
+  const dividendAnnual = dividendPrediction.annual;
   const dividend = dividendYearEnd && dividendAnnual
     ? `期末${dividendYearEnd}円、年間${dividendAnnual}円`
     : dividendAnnual
@@ -714,7 +754,8 @@ function parseFinancialDigest(rawText: string): FinancialDigestBase {
     forecastRevisionLine,
     unit,
     dividendAnnual,
-    dividendYearEnd
+    dividendYearEnd,
+    dividendPage: dividendPrediction.pageNumber
   };
 }
 
@@ -890,6 +931,13 @@ function buildFreeAiDigest(
 
 function detectConsolidation(text: string): "consolidated" | "non_consolidated" | "unknown" {
   const header = text.slice(0, 2500);
+  const titleIndex = header.indexOf("決算短信");
+  if (titleIndex >= 0) {
+    const title = header.slice(titleIndex, titleIndex + 180).split("\n")[0];
+    // 後段の「参考：個別業績」より、開示タイトル自身の連結・個別表示を優先する。
+    if (/[（(](?:非連結|個別)[）)]|〔[^〕]*(?:非連結|個別)[^〕]*〕/u.test(title)) return "non_consolidated";
+    if (/[（(]連結[）)]|〔[^〕]*連結[^〕]*〕/u.test(title)) return "consolidated";
+  }
   if (/〔[^〕]*(?:非連結|個別)[^〕]*〕|[（(](?:非連結|個別)[）)]/.test(header)) return "non_consolidated";
   if (/〔[^〕]*〕\s*[（(]連結[）)]|[（(]連結[）)]|連結業績|連結経営成績|連結財務/.test(header)) return "consolidated";
   if (/非連結|個別決算/.test(header)) return "non_consolidated";
@@ -921,7 +969,7 @@ export function analyzeDisclosureText(input: {
   const warnings = analyzeWarnings(pages);
   const sourceCheckpoints = buildCheckpoints(pages);
   const extractedNumbers = extractNumbers(pages);
-  const financialDigest = parseFinancialDigest(rawText);
+  const financialDigest = parseFinancialDigest(rawText, pages);
   const detectedTopicCount = topics.filter((topic) => topic.detected).length;
   const oneLineSummary = buildSummary(topics, warnings, financialDigest);
   const freeAiDigest = buildFreeAiDigest(topics, warnings, extractedNumbers, rawText, financialDigest);
@@ -958,13 +1006,7 @@ export function analyzeDisclosureText(input: {
   const forecastPage = financialDigest.forecast
     ? findEvidencePage(pages, ["予想", financialDigest.forecast.sales, financialDigest.forecast.operatingProfit])
     : undefined;
-  const dividendPage = financialDigest.dividend
-    ? findEvidencePage(pages, [
-        "予想",
-        financialDigest.dividendAnnual || "年間",
-        financialDigest.dividendYearEnd || "期末"
-      ])
-    : undefined;
+  const dividendPage = financialDigest.dividend ? financialDigest.dividendPage : undefined;
   const pageQuality = (pageNumber: number | undefined) => pages.find((page) => page.pageNumber === pageNumber)?.quality;
   const financialFacts = createPdfFinancialFacts({
     performance: financialDigest.performance,

@@ -101,4 +101,26 @@ describe("accuracyEvaluator", () => {
     const summary = evaluateAccuracy([{ ...item, actual }]);
     expect(summary.period.rate).toBe(1);
   });
+
+  it("ケース数だけ存在して必須評価軸の分母が空のgolden fixtureを不合格にする", () => {
+    const emptyCase: AccuracyCase = {
+      id: "empty-golden-fixture",
+      source: "synthetic_regression",
+      expected: { metrics: {}, warnings: [], referencePages: [] },
+      actual: { metrics: {}, warnings: [], referencePages: [] }
+    };
+
+    const summary = evaluateAccuracy([emptyCase]);
+    const gate = evaluateAccuracyGate(summary);
+
+    expect(summary.caseCount).toBe(1);
+    expect(gate.passed).toBe(false);
+    expect(gate.reasons).toEqual([
+      "document_selection_cases_missing",
+      "critical_metrics_missing",
+      "period_cases_missing",
+      "consolidation_cases_missing",
+      "reference_pages_missing"
+    ]);
+  });
 });

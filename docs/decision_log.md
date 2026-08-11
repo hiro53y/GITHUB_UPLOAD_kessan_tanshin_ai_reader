@@ -7,7 +7,10 @@
 - 金額単位は主要表直前の表記を採用し、億円・百万円・千円・円を円へ正規化する。単位を確認できない場合は百万円と仮定せず、主要数値の確定を抑止する。
 - XBRLは連結context、累計duration、Summaryファイルを優先し、3主要指標未満・期間不一致・連結区分不一致・JPY未確認の値でPDF factsを上書きしない。
 - AIはWorkers AI JSON Modeの構造化claimsのみを受け入れ、Workerとブラウザの両方でschema・根拠抜粋・ページ・数値トークン・禁止表現を検証する。不合格応答は表示せずルール要約へフォールバックする。
-- 精度向上版は一時的に別フォルダーで検証したが、ユーザー指定によりGit管理済みの正本 `deliverables/GITHUB_UPLOAD_kessan_tanshin_ai_reader/` へ統合する。正本固有の銘柄マスタ検索・構造化レポート・同一オリジンAI経路を保持し、別フォルダーは統合検証後に削除する。
+- 精度向上版はGit管理済みの正本 `deliverables/GITHUB_UPLOAD_kessan_tanshin_ai_reader/` へ統合済み。検証用の別フォルダーは削除済みで、以後は正本だけを上書きし、別名コピーを作らない。
+- build `2026-08-11.1` では、固定URLのbundleに対するimmutable指定を廃止し、内容hash付きService Worker cache・HTTP cache再検証・build前の`dist`限定cleanを採用した。旧buildや旧bundleを配布・表示し続けないことを優先する。
+- 再監査で、PDF/XBRLのページ・context・dimension・完全性、AIの中断/timeout、履歴復元、資料選定、proxyの本文上限・redirect再検証・IPv6/例外情報漏洩を修正し、境界条件を回帰テストへ固定した。
+- Pages AIはCORSだけを濫用対策とせず、Service binding `AI_GATEWAY` から同梱Workerへ委譲する。WorkerのDurable ObjectでIP別・AI全体を二重制限し、binding未設定・制限基盤障害時はAIだけfail closedにする。
 
 ## 2026-06-29
 
@@ -21,14 +24,14 @@
 ## 2026-06-25
 
 - 最新決算のJPX履歴検索は最低120日とする。理由: 30日設定が保存されていると、5451（ヨドコウ）の2026年5月11日公表資料が2026年6月25日時点で期間外となり、公開資料が存在しても0件になるため。
-- 既存成果物は上書きせず、修正版を `deliverables/GITHUB_UPLOAD_kessan_tanshin_ai_reader_20260625_5451_FIX/` に新規作成する。
+- 当時は別名の2026-06-25修正版を作成した（現在は正本へ統合・別名フォルダー削除済み。この運用は廃止）。
 
 ## 2026-06-20
 
 - TDnet検索で決算関連資料が無い場合は、公式JPX「東証上場会社情報サービス」の会社別開示履歴を利用する。理由: TDnet検索画面の公開期間内に直近決算が無い銘柄でも、銘柄コードから最新決算短信を取得できるようにするため。
 - Cloudflare Pagesでは同梱の `/api/proxy` と `/api/disclosures` を既定経路として自動利用する。理由: Worker URL未設定の公開版でブラウザのCORS制限により全検索が失敗する状態をなくすため。
 - `documentType === "other"` の資料は自動選定しない。理由: 役員人事などを「最新決算関連資料」と誤判定するのを防ぐため。
-- 既存成果物は上書きせず、修正版を `deliverables/GITHUB_UPLOAD_kessan_tanshin_ai_reader_20260620/` に新規作成する。
+- 当時は別名の2026-06-20修正版を作成した（現在は正本へ統合・別名フォルダー削除済み。この運用は廃止）。
 
 ## 2026-05-09
 
@@ -41,4 +44,4 @@
 - 独自ビルドに `process.env.NODE_ENV` / `import.meta.env` 置換を追加した。理由: Vite CLIを使わないビルドでは置換が自動で行われず、ブラウザ実行時にクラッシュする可能性があったため。
 - GitHubアップロード対象は `deliverables/GITHUB_UPLOAD_kessan_tanshin_ai_reader/` の1フォルダにした。理由: ユーザー要件として、`deliverables/` 直下の1フォルダをGitHubへアップロードすればCloudflare Pagesで使える形が求められたため。`node_modules/`、`dist/`、`out/` は含めない。
 - ビルドスクリプトから `@rollup/plugin-node-resolve` への直接importを外し、Node標準の `require.resolve` を使う軽量resolverへ置き換えた。あわせて `.node-version` / `.nvmrc` でNode.js 20系を指定した。理由: 推移依存だけに頼る直接importはCloudflareのクリーン環境で解決できない可能性があったため。
-- OneDrive配下で `.git/index.lock` と `.git/objects` の作成が拒否されたため、GitHubアップロード用の修正版クリーンフォルダを `deliverables/GITHUB_UPLOAD_kessan_tanshin_ai_reader_FIXED/` に作成した。理由: Git操作に依存せず、フォルダ単位でGitHubへ再アップロードできる状態にするため。
+- 当時はOneDrive配下のGit書込問題を避けるため別名の修正版クリーンフォルダを作成した（現在は正本へ統合・別名フォルダー削除済み。この運用は廃止）。

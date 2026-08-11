@@ -1,5 +1,6 @@
 import { existsSync, statSync } from "node:fs";
-import { copyFile, mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
@@ -221,7 +222,7 @@ async function writeHtmlAndPwa() {
     <script type="module" src="/assets/app.js"></script>
     <script>
       if ("serviceWorker" in navigator) {
-        window.addEventListener("load", () => navigator.serviceWorker.register("/sw.js").catch(() => {}));
+        window.addEventListener("load", () => navigator.serviceWorker.register("/sw.js", { updateViaCache: "none" }).catch(() => {}));
       }
     </script>
   </body>
@@ -252,12 +253,29 @@ async function writeHtmlAndPwa() {
     )
   );
 
+  // app.js/index.css は固定URLなので、内容からService Workerのキャッシュ名を生成する。
+  // これによりデプロイ後も旧bundleを無期限に返し続ける状態を防ぐ。
+  const cachedAssetBodies = await Promise.all([
+    readFile(path.join(dist, "index.html")),
+    readFile(path.join(assets, "index.css")),
+    readFile(path.join(assets, "app.js")),
+    readFile(path.join(dist, "icon.svg")),
+    readFile(path.join(dist, "maskable-icon.svg"))
+  ]);
+  const cacheRevision = cachedAssetBodies.reduce(
+    (hash, body) => hash.update(body),
+    createHash("sha256")
+  ).digest("hex").slice(0, 12);
+
   await writeFile(
     path.join(dist, "sw.js"),
-    `const CACHE = "kessan-reader-v2";
+    `const CACHE = "kessan-reader-${cacheRevision}";
+const PRECACHE = ["/", "/index.html", "/assets/index.css", "/assets/app.js", "/icon.svg", "/maskable-icon.svg"];
 self.addEventListener("install", (event) => {
   self.skipWaiting();
-  event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(["/", "/index.html", "/assets/index.css", "/assets/app.js", "/icon.svg", "/maskable-icon.svg"])));
+  event.waitUntil(caches.open(CACHE).then((cache) => Promise.all(
+    PRECACHE.map((asset) => cache.add(new Request(asset, { cache: "reload" })))
+  )));
 });
 self.addEventListener("activate", (event) => event.waitUntil(Promise.all([
   caches.keys().then((keys) => Promise.all(keys.filter((key) => key !== CACHE).map((key) => caches.delete(key)))),
@@ -283,6 +301,12 @@ self.addEventListener("fetch", (event) => {
 }
 
 export async function buildApp() {
+  // 固定ファイル名のbundleへ移行する前の成果物を配布へ混在させない。
+  // 削除対象は必ずこのプロジェクト直下の dist だけに限定する。
+  if (path.dirname(dist) !== root || path.basename(dist) !== "dist") {
+    throw new Error(`Unsafe dist path: ${dist}`);
+  }
+  await rm(dist, { recursive: true, force: true });
   await mkdir(assets, { recursive: true });
   await copyDir(path.join(root, "public"), dist);
   await buildCss();

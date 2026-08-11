@@ -2,7 +2,7 @@
 
 ## 現在の状況
 
-決算短信AIリーダーの精度向上版をGit管理済みの正本へ統合済み。2026-08-11に、公式PDFゴールド評価、TDnet/JPX候補選定、PDF表座標復元とページ品質ゲート、XBRL context/unit検証、統一financial facts、Workers AI構造化出力の二重検証を追加し、正本固有の銘柄マスタ検索・構造化レポート・同一オリジンAI経路も維持した。`npm run accuracy`、89テスト、3構成typecheck、build、起動smokeはすべて成功。
+決算短信AIリーダーの精度向上版をGit管理済みの正本へ統合済み。build表示は `2026-08-11.1`。2026-08-11に、公式PDFゴールド評価、TDnet/JPX候補選定、PDF表座標復元とページ品質ゲート、XBRL context/unit検証、統一financial facts、Workers AI構造化出力の二重検証を追加し、正本固有の銘柄マスタ検索・構造化レポート・同一オリジンAI経路も維持した。`npm run accuracy`、全128テスト、3構成typecheck、build、起動smokeはすべて成功。
 
 ## 主な変更（2026-08-11 精度向上）
 
@@ -13,8 +13,9 @@
 - XBRLはJPY unitRef、期間、連結区分、主要指標の完全性を検証。累計durationとSummaryを優先し、PDFと期間/連結が違うcontextでは上書きしない。
 - 数値・判定・要約・良い点/注意点・Markdown・AI入力を統一financial factsから再生成し、画面とMarkdownへ数値ソース/品質/contextを表示。
 - Workers AIは `@cf/meta/llama-3.1-8b-instruct-fast` のJSON Schema出力を使用。Workerとブラウザ双方で根拠ページ・抜粋・数値トークン・禁止表現・実行payload hashを検証し、不合格応答は表示しない。
-- 検証: `npm run accuracy` 5件、`npm test` 89件、`npm run typecheck` 3構成、`npm run build`、`npm run dev -- --smoke` が正本で成功。
-- 未実施: Cloudflareへの本番デプロイ、Workers AIライブ推論、Android実機、実銘柄XBRLの画面目視。
+- 追加再監査: AI中断/timeout・Service binding/DO二重制限、履歴復元、PDF配当ページ、XBRL不完全Summary/非集計dimension/成長率来歴、候補資料の新旧順、警告否定文、proxyの本文上限/redirect/IPv6/内部例外、PWA更新キャッシュを修正。
+- 検証: `npm run accuracy` 2ファイル・6テスト、`npm test` 15ファイル・128テスト、`npm run typecheck` 3構成、`npm run build`、`npm run dev -- --smoke` が正本で成功。
+- 未実施: Cloudflareへの本番デプロイ、Pagesの`AI_GATEWAY` Service binding/Workers AIライブ推論、Android実機、実銘柄XBRLの画面目視。
 
 ## 主な変更（2026-06-29 デバッグ精査）
 

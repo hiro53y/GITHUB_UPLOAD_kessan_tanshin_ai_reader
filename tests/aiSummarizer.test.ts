@@ -3,6 +3,7 @@ import {
   AI_DISCLAIMER,
   AI_MAX_CLAIMS,
   AI_MODEL,
+  AI_TIMEOUT_MS,
   buildAiExecutionPayload,
   buildDisplaySummary,
   fetchAiSummary,
@@ -33,6 +34,7 @@ const structured: AiStructuredSummary = {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 describe("AI structured summary boundary", () => {
@@ -160,5 +162,73 @@ describe("AI structured summary boundary", () => {
     expect(result.ok).toBe(false);
     expect(result.error).toBe("AI要約リクエストに失敗しました");
     expect(result.error).not.toContain("secret-token");
+  });
+
+  it("404/501はAI基盤未設定としてfallback扱いにする", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("not configured", { status: 501 })));
+
+    const result = await fetchAiSummary("", input);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unavailable endpoint must not be accepted");
+    expect(result.status).toBe("fallback");
+    expect(result.fallback).toBe("rule_summary");
+    expect(result.validation.errors).toContain("http_501");
+  });
+
+  it("レスポンス本文の読取中でもユーザー中断を握り潰さない", async () => {
+    const controller = new AbortController();
+    let markFetchStarted!: () => void;
+    const fetchStarted = new Promise<void>((resolve) => {
+      markFetchStarted = resolve;
+    });
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, init?: RequestInit) => {
+      const requestSignal = init?.signal as AbortSignal;
+      const response = new Response(new ReadableStream({
+        start(streamController) {
+          requestSignal.addEventListener("abort", () => {
+            streamController.error(new DOMException("中断されました", "AbortError"));
+          }, { once: true });
+        }
+      }), { status: 200 });
+      markFetchStarted();
+      return response;
+    }));
+
+    const pending = fetchAiSummary("", input, undefined, undefined, undefined, controller.signal);
+    await fetchStarted;
+    controller.abort();
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+  });
+
+  it("endpointを60秒で中断し、次のendpointへフォールバックする", async () => {
+    const execution = buildAiExecutionPayload(input);
+    const inputHash = await hashAiExecutionPayload(execution);
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      if (fetchMock.mock.calls.length === 1) {
+        return await new Promise<Response>((_resolve, reject) => {
+          const requestSignal = init?.signal as AbortSignal;
+          requestSignal.addEventListener("abort", () => reject(new DOMException("timeout", "AbortError")), { once: true });
+          vi.advanceTimersByTime(AI_TIMEOUT_MS);
+        });
+      }
+      return new Response(JSON.stringify({
+        ok: true,
+        status: "validated",
+        structured,
+        validation: { valid: true, errors: [] },
+        inputHash,
+        model: AI_MODEL
+      }), { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await fetchAiSummary("https://worker.example", input);
+    expect(result.ok).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      "https://worker.example/ai/summarize",
+      "/api/ai/summarize"
+    ]);
   });
 });

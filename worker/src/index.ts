@@ -1,5 +1,11 @@
 import { lookupJpxDisclosures } from "./jpxDisclosures";
 import {
+  fetchWithValidatedRedirects,
+  isPrivateHostname,
+  ProxyRequestError,
+  readBoundedProxyBody
+} from "../../functions/lib/proxySecurity";
+import {
   AI_MODEL,
   buildAiExecutionPayload,
   buildDisplaySummary,
@@ -20,11 +26,12 @@ type Env = {
 };
 
 const baseAllowedHosts = new Set(["www.release.tdnet.info", "release.tdnet.info", "www2.jpx.co.jp"]);
+const RATE_LIMIT_MAX = 30;
 
 /**
- * Durable Object ベースの IP 単位レートリミッタ。
+ * Durable Object ベースのkey単位レートリミッタ。
  * モジュールスコープ Map と異なり、Workers の複数インスタンス間で正しく共有される。
- * 60秒に30リクエストまで（IP単位）。
+ * 60秒に30リクエストまで。
  */
 export class RateLimiterDO {
   private state: DurableObjectState;
@@ -46,14 +53,17 @@ export class RateLimiterDO {
         }
       }
       const now = Date.now();
+      let allowed = true;
       if (!this.resetAt || this.resetAt < now) {
         this.count = 1;
         this.resetAt = now + 60_000;
-      } else {
+      } else if (this.count < RATE_LIMIT_MAX) {
         this.count += 1;
+      } else {
+        // 上限後は同じ拒否状態を書き続けず、濫用時の不要なstorage書込を避ける。
+        allowed = false;
       }
-      await this.state.storage.put("counter", { count: this.count, resetAt: this.resetAt });
-      const allowed = this.count <= 30;
+      if (allowed) await this.state.storage.put("counter", { count: this.count, resetAt: this.resetAt });
       return new Response(JSON.stringify({ allowed, count: this.count, resetAt: this.resetAt }), {
         headers: { "Content-Type": "application/json" }
       });
@@ -121,23 +131,27 @@ function allowedHosts(env: Env): Set<string> {
 }
 
 function isAllowedUrl(url: URL, env: Env): boolean {
-  if (url.protocol !== "https:") return false;
+  if (url.protocol !== "https:" || isPrivateHostname(url.hostname)) return false;
   return allowedHosts(env).has(url.hostname.toLowerCase());
 }
 
 /** Durable Object ベースのレート制限チェック（複数インスタンス間で正しく共有） */
-async function checkRateLimitDO(request: Request, env: Env): Promise<boolean> {
+async function checkRateLimitKey(env: Env, key: string, failOpen: boolean): Promise<boolean> {
   try {
-    const ip = request.headers.get("CF-Connecting-IP") || "unknown";
-    const id = env.RATE_LIMITER.idFromName(ip);
+    const id = env.RATE_LIMITER.idFromName(key);
     const stub = env.RATE_LIMITER.get(id);
     const resp = await stub.fetch(new Request("https://rate-limiter/check", { method: "POST" }));
     const data = await resp.json() as { allowed: boolean };
     return data.allowed;
   } catch {
-    // DO に障害があってもアプリ全体を落とさない（fail-open）
-    return true;
+    return failOpen;
   }
+}
+
+async function checkRateLimitDO(request: Request, env: Env): Promise<boolean> {
+  const ip = request.headers.get("CF-Connecting-IP") || "unknown";
+  // proxy/開示取得は従来どおり可用性優先。課金を伴うAIは別途fail closedにする。
+  return checkRateLimitKey(env, ip, true);
 }
 
 const MAX_AI_BODY_BYTES = 128 * 1024;
@@ -182,8 +196,15 @@ async function handleAiSummarize(request: Request, env: Env): Promise<Response> 
   if (request.method !== "POST") {
     return jsonAiFailure("method_not_allowed", 405, { valid: false, errors: ["method_not_allowed"] });
   }
-  if (!(await checkRateLimitDO(request, env))) {
-    return jsonAiFailure("rate_limited", 429, { valid: false, errors: ["rate_limited"] });
+  const ip = request.headers.get("CF-Connecting-IP") || "unknown";
+  const [clientAllowed, globalAllowed] = await Promise.all([
+    checkRateLimitKey(env, `ai-ip:${ip}`, false),
+    checkRateLimitKey(env, "ai-global", false)
+  ]);
+  if (!clientAllowed || !globalAllowed) {
+    const response = jsonAiFailure("rate_limited", 429, { valid: false, errors: ["rate_limited"] });
+    response.headers.set("Retry-After", "60");
+    return response;
   }
 
   let input: AiSummaryInput | undefined;
@@ -294,14 +315,19 @@ async function handleProxy(request: Request, env: Env, ctx: ExecutionContext): P
     }
   }
 
-  const upstream = await fetch(target.toString(), {
-    method: request.method,
-    headers: {
-      "User-Agent": "Mozilla/5.0 kessan-tanshin-reader/0.1",
-      "Accept": request.headers.get("Accept") || "*/*",
-      "Content-Type": request.headers.get("Content-Type") || "application/x-www-form-urlencoded"
-    },
-    body: request.method === "POST" ? await request.text() : undefined
+  const method = request.method as "GET" | "POST";
+  const headers = new Headers({
+    "User-Agent": "Mozilla/5.0 kessan-tanshin-reader/0.1",
+    "Accept": request.headers.get("Accept") || "*/*",
+    "Content-Type": request.headers.get("Content-Type") || "application/x-www-form-urlencoded"
+  });
+  const body = method === "POST" ? await readBoundedProxyBody(request) : undefined;
+  const upstream = await fetchWithValidatedRedirects({
+    url: target,
+    method,
+    headers,
+    body,
+    isAllowed: (url) => isAllowedUrl(url, env)
   });
 
   const response = new Response(upstream.body, upstream);
@@ -380,6 +406,7 @@ export default {
       });
     }
     return handleProxy(request, env, ctx).catch((error) => {
+      if (error instanceof ProxyRequestError) return jsonError(error.message, error.status);
       logUnhandled(url.pathname, error);
       return jsonError("internal_error", 500);
     });

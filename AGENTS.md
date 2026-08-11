@@ -35,5 +35,5 @@
 - その1フォルダをGitHubリポジトリのルートとしてアップロードすれば、Cloudflare Pagesでビルドできる状態にする。
 - GitHubアップロード用フォルダには `src/`、`public/`、`worker/`、`scripts/`、設定ファイル、README、AGENTS、TASKSを含める。
 - GitHubアップロード用フォルダには `node_modules/`、`dist/`、`out/`、`.npm-cache/`、`.wrangler/`、二重の `github_upload/` を含めない。
-- 既存の `deliverables/` 内ファイルは上書きしない。
+- 改修対象は `deliverables/GITHUB_UPLOAD_kessan_tanshin_ai_reader/` の正本のみとし、このフォルダ内を上書きする。別名コピーや sibling フォルダは作らない。
 - `CLAUDE.md` は変更しない。

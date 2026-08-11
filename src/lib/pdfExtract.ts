@@ -100,7 +100,13 @@ export function reconstructPdfLines(items: PdfExtractItem[]): PdfExtractLine[] {
       if (previous && gap > Math.max(14, (previous.height || 0) * 1.5)) {
         if (cell) cells.push(cell.trim());
         cell = item.text;
-      } else cell += `${cell ? " " : ""}${item.text}`;
+      } else {
+        // 日本語PDFでは1文字ずつ別itemになることがある。近接glyphへ無条件に
+        // 空白を挿入すると「売 上 高」となり、主要表ヘッダを検出できない。
+        const height = Math.max(previous?.height || 0, item.height || 0);
+        const wordGap = previous && gap > Math.max(1.5, height * 0.2);
+        cell += `${cell && wordGap ? " " : ""}${item.text}`;
+      }
       previous = item;
     }
     if (cell) cells.push(cell.trim());

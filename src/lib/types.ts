@@ -136,6 +136,10 @@ export type FinancialMetricFact = {
   key: FinancialMetricKey;
   valueYen: number;
   growthRate?: number;
+  /** 金額と成長率の来歴が異なる場合に、成長率側の出所を明示する。 */
+  growthSource?: FinancialFactSource;
+  growthQuality?: FinancialFactQuality;
+  growthPageNumber?: number;
   source: FinancialFactSource;
   quality: FinancialFactQuality;
   period?: string;
@@ -269,6 +273,8 @@ export type HistoryItem = {
   warningCount: number;
   reportMarkdown: string;
   extractedTextSample: string;
+  /** PDF抽出時の警告。履歴を開いた際に別レポートの警告を混在させないため、項目単位で保持する。 */
+  pdfWarnings?: string[];
   status: "success" | "failed";
   report?: AnalysisReport;
   fetchResult?: DisclosureFetchResult;

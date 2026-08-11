@@ -88,6 +88,9 @@ function rowToGroup(
       key: meta.key,
       valueYen: value * unitMultiplier(unit),
       growthRate,
+      growthSource: typeof growthRate === "number" ? "pdf" : undefined,
+      growthQuality: typeof growthRate === "number" ? quality : undefined,
+      growthPageNumber: typeof growthRate === "number" ? pageNumber : undefined,
       source: "pdf",
       quality,
       period,
@@ -148,10 +151,13 @@ function xbrlRowToGroup(
   for (const meta of metricMeta) {
     const value = numeric(String(row[meta.value] ?? ""));
     if (typeof value !== "number") continue;
+    const growthRate = numeric(String(row[meta.growth] ?? ""));
     metrics[meta.key] = {
       key: meta.key,
       valueYen: value * unitMultiplier(unit),
-      growthRate: numeric(String(row[meta.growth] ?? "")),
+      growthRate,
+      growthSource: typeof growthRate === "number" ? "xbrl" : undefined,
+      growthQuality: typeof growthRate === "number" ? "high" : undefined,
       source: "xbrl",
       quality: "high",
       period: row.period || periodFallback,
@@ -177,12 +183,42 @@ function xbrlRowToGroup(
 function mergeGroup(base: FinancialFactGroup | undefined, incoming: FinancialFactGroup | undefined): FinancialFactGroup | undefined {
   if (!incoming) return base;
   if (!base) return incoming;
-  const metrics = { ...base.metrics, ...incoming.metrics };
-  const sources = new Set(Object.values(metrics).map((fact) => fact?.source).filter(Boolean));
   const period = base.period || incoming.period;
-  for (const fact of Object.values(metrics)) {
-    if (fact) fact.period = period;
+  const metrics: FinancialFactGroup["metrics"] = {};
+  let borrowedPdfGrowth = false;
+  for (const key of metricMeta.map((item) => item.key)) {
+    const baseFact = base.metrics[key];
+    const incomingFact = incoming.metrics[key];
+    if (incomingFact) {
+      const hasIncomingGrowth = typeof incomingFact.growthRate === "number";
+      const useBaseGrowth = !hasIncomingGrowth && typeof baseFact?.growthRate === "number";
+      borrowedPdfGrowth ||= useBaseGrowth;
+      const fallbackUncertainty = useBaseGrowth ? ["成長率はPDF抽出値を補完しています"] : [];
+      metrics[key] = {
+        ...incomingFact,
+        growthRate: incomingFact.growthRate ?? baseFact?.growthRate,
+        growthSource: hasIncomingGrowth
+          ? (incomingFact.growthSource ?? incomingFact.source)
+          : useBaseGrowth ? (baseFact?.growthSource ?? baseFact?.source) : undefined,
+        growthQuality: hasIncomingGrowth
+          ? (incomingFact.growthQuality ?? incomingFact.quality)
+          : useBaseGrowth ? (baseFact?.growthQuality ?? baseFact?.quality) : undefined,
+        growthPageNumber: hasIncomingGrowth ? incomingFact.growthPageNumber : useBaseGrowth ? baseFact?.growthPageNumber ?? baseFact?.pageNumber : undefined,
+        quality: useBaseGrowth ? "medium" : incomingFact.quality,
+        uncertainty: Array.from(new Set([
+          ...incomingFact.uncertainty,
+          ...(useBaseGrowth ? baseFact?.uncertainty ?? [] : []),
+          ...fallbackUncertainty
+        ])),
+        period
+      };
+    } else if (baseFact) {
+      metrics[key] = { ...baseFact, period };
+    }
   }
+  const sources = new Set(Object.values(metrics).flatMap((fact) => fact
+    ? [fact.source, ...(typeof fact.growthRate === "number" && fact.growthSource ? [fact.growthSource] : [])]
+    : []));
   return {
     ...base,
     ...incoming,
@@ -190,7 +226,11 @@ function mergeGroup(base: FinancialFactGroup | undefined, incoming: FinancialFac
     metrics,
     source: sources.size > 1 ? "mixed" : incoming.source,
     quality: sources.size > 1 ? "medium" : incoming.quality,
-    uncertainty: Array.from(new Set([...base.uncertainty, ...incoming.uncertainty]))
+    uncertainty: Array.from(new Set([
+      ...base.uncertainty,
+      ...incoming.uncertainty,
+      ...(borrowedPdfGrowth ? ["一部の成長率はPDF抽出値を補完しています"] : [])
+    ]))
   };
 }
 
@@ -251,7 +291,11 @@ export function mergeVerifiedXbrlFacts(base: FinancialFacts, xbrl: XbrlExtractRe
     performance: mergedPerformance,
     forecast: mergedForecast,
     quality: mergedQuality,
-    uncertainty: Array.from(new Set([...base.uncertainty, ...reasons]))
+    uncertainty: Array.from(new Set([
+      ...base.uncertainty,
+      ...mergedGroups.flatMap((group) => group.uncertainty),
+      ...reasons
+    ]))
   };
   return { facts: merged, applied: true, reasons: Array.from(new Set(reasons)) };
 }
@@ -397,11 +441,15 @@ export function financialFactsToAiFacts(facts: FinancialFacts | undefined): AiFa
     ? metricMeta.flatMap(({ key, label }) => {
         const fact = group.metrics[key];
         if (!fact) return [];
+        const amountSource = fact.source === "xbrl" ? `XBRL:${fact.contextRef || "context確認済み"}` : "PDF";
+        const growthSource = typeof fact.growthRate === "number" && fact.growthSource && fact.growthSource !== fact.source
+          ? ` / 成長率:${fact.growthSource === "xbrl" ? "XBRL" : "PDF"}`
+          : "";
         return [{
           label: `${group === facts.forecast ? "通期予想" : "実績"}${label}`,
           value: `${formatYen(fact.valueYen)}${typeof fact.growthRate === "number" ? ` / ${formatGrowth(fact.growthRate).text}` : ""}`,
-          page: fact.pageNumber,
-          source: fact.source === "xbrl" ? `XBRL:${fact.contextRef || "context確認済み"}` : "PDF"
+          page: fact.pageNumber ?? fact.growthPageNumber,
+          source: `${amountSource}${growthSource}`
         }];
       })
     : []);

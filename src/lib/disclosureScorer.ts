@@ -110,10 +110,12 @@ export function selectBestDisclosure(candidates: DisclosureItem[], ticker?: stri
     .sort((a, b) => {
       const type = rank[a.documentType] - rank[b.documentType];
       if (type) return type;
-      const correction = Number(isCorrectionTitle(b.title)) - Number(isCorrectionTitle(a.title));
-      if (correction) return correction;
       const date = (Date.parse(b.disclosedAt || "") || 0) - (Date.parse(a.disclosedAt || "") || 0);
       if (date) return date;
+      // 訂正版優先は同日開示の同種資料内に限定する。
+      // 古い四半期の訂正版が最新四半期の原本より先に来ることを防ぐ。
+      const correction = Number(isCorrectionTitle(b.title)) - Number(isCorrectionTitle(a.title));
+      if (correction) return correction;
       const assets = Number(Boolean(b.pdfUrl)) + Number(Boolean(b.xbrlUrl)) - Number(Boolean(a.pdfUrl)) - Number(Boolean(a.xbrlUrl));
       if (assets) return assets;
       return a.id.localeCompare(b.id);

@@ -102,3 +102,65 @@ it("Attachment XBRLよりSummary iXBRLを拡張子横断で優先する", async 
   expect(result.xbrlFileName).toContain("Summary");
   expect(result.performance?.sales).toBe("900");
 });
+
+it("不完全なSummaryより主要4指標が揃うAttachmentを優先する", async () => {
+  const context = `<xbrli:context id="CurrentConsolidatedDuration"><xbrli:entity><xbrli:identifier scheme="test">1</xbrli:identifier></xbrli:entity><xbrli:period><xbrli:startDate>2025-04-01</xbrli:startDate><xbrli:endDate>2026-03-31</xbrli:endDate></xbrli:period></xbrli:context>`;
+  const unit = `<xbrli:unit id="JPY"><xbrli:measure>iso4217:JPY</xbrli:measure></xbrli:unit>`;
+  const summary = `<xbrli:xbrl>${context}${unit}
+    <t:NetSales contextRef="CurrentConsolidatedDuration" unitRef="JPY">900000000</t:NetSales>
+    <t:OperatingIncome contextRef="CurrentConsolidatedDuration" unitRef="JPY">90000000</t:OperatingIncome>
+    <t:OrdinaryIncome contextRef="CurrentConsolidatedDuration" unitRef="JPY">85000000</t:OrdinaryIncome>
+  </xbrli:xbrl>`;
+  const attachment = `<xbrli:xbrl>${context}${unit}
+    <t:NetSales contextRef="CurrentConsolidatedDuration" unitRef="JPY">800000000</t:NetSales>
+    <t:OperatingIncome contextRef="CurrentConsolidatedDuration" unitRef="JPY">80000000</t:OperatingIncome>
+    <t:OrdinaryIncome contextRef="CurrentConsolidatedDuration" unitRef="JPY">70000000</t:OrdinaryIncome>
+    <t:ProfitAttributableToOwnersOfParent contextRef="CurrentConsolidatedDuration" unitRef="JPY">60000000</t:ProfitAttributableToOwnersOfParent>
+  </xbrli:xbrl>`;
+  const zipped = zipSync({
+    "XBRLData/Summary/summary.xbrl": strToU8(summary),
+    "XBRLData/Attachment/statement.xbrl": strToU8(attachment)
+  });
+  mockFetchArrayBuffer.mockResolvedValue(zipped.buffer.slice(zipped.byteOffset, zipped.byteOffset + zipped.byteLength));
+
+  const result = await extractXbrlMetrics("https://example.test/incomplete-summary.zip");
+
+  expect(result.source).toBe("attachment");
+  expect(result.xbrlFileName).toContain("Attachment");
+  expect(result.performance?.sales).toBe("800");
+  expect(result.performance?.operatingProfit).toBe("80");
+  expect(result.performance?.ordinaryProfit).toBe("70");
+  expect(result.performance?.netProfit).toBe("60");
+  expect(result.performance?.quality).toBe("high");
+});
+
+it("全社総額contextをsegment dimension付きcontextより優先し、dimensionしかない予想には不確実性を付ける", async () => {
+  const context = (id: string, start: string, end: string, segment = false) => `<xbrli:context id="${id}"><xbrli:entity><xbrli:identifier scheme="test">1</xbrli:identifier>${segment
+    ? `<xbrli:segment><xbrldi:explicitMember dimension="jppfs_cor:OperatingSegmentsAxis">jppfs_cor:ConsumerMember</xbrldi:explicitMember></xbrli:segment>`
+    : ""}</xbrli:entity><xbrli:period><xbrli:startDate>${start}</xbrli:startDate><xbrli:endDate>${end}</xbrli:endDate></xbrli:period></xbrli:context>`;
+  const facts = (contextRef: string, sales: number) => `
+    <t:NetSales contextRef="${contextRef}" unitRef="JPY">${sales * 1_000_000}</t:NetSales>
+    <t:OperatingIncome contextRef="${contextRef}" unitRef="JPY">100000000</t:OperatingIncome>
+    <t:OrdinaryIncome contextRef="${contextRef}" unitRef="JPY">90000000</t:OrdinaryIncome>
+    <t:ProfitAttributableToOwnersOfParent contextRef="${contextRef}" unitRef="JPY">70000000</t:ProfitAttributableToOwnersOfParent>`;
+  const xbrl = `<xbrli:xbrl>
+    ${context("CurrentTotalConsolidatedDuration", "2025-04-01", "2026-03-31")}
+    ${context("CurrentSegmentConsolidatedDuration", "2025-04-01", "2026-03-31", true)}
+    ${context("ForecastYearSegmentConsolidatedDuration", "2026-04-01", "2027-03-31", true)}
+    <xbrli:unit id="JPY"><xbrli:measure>iso4217:JPY</xbrli:measure></xbrli:unit>
+    ${facts("CurrentTotalConsolidatedDuration", 100)}
+    ${facts("CurrentSegmentConsolidatedDuration", 999)}
+    ${facts("ForecastYearSegmentConsolidatedDuration", 120)}
+  </xbrli:xbrl>`;
+  const zipped = zipSync({ "XBRLData/Summary/dimensions.xbrl": strToU8(xbrl) });
+  mockFetchArrayBuffer.mockResolvedValue(zipped.buffer.slice(zipped.byteOffset, zipped.byteOffset + zipped.byteLength));
+
+  const result = await extractXbrlMetrics("https://example.test/dimensions.zip");
+
+  expect(result.performance?.context).toBe("CurrentTotalConsolidatedDuration");
+  expect(result.performance?.sales).toBe("100");
+  expect(result.performance?.uncertainty).not.toContain("セグメント等のdimensionを含むcontextのため、全社値として確定できません");
+  expect(result.forecast?.context).toBe("ForecastYearSegmentConsolidatedDuration");
+  expect(result.forecast?.quality).toBe("medium");
+  expect(result.forecast?.uncertainty).toContain("セグメント等のdimensionを含むcontextのため、全社値として確定できません");
+});

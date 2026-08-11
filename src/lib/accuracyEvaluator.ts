@@ -153,6 +153,13 @@ export function evaluateAccuracy(cases: AccuracyCase[]): AccuracySummary {
 export function evaluateAccuracyGate(summary: AccuracySummary, baselineWarningF1 = 0): AccuracyGate {
   const reasons: string[] = [];
   if (summary.caseCount === 0) reasons.push("golden_cases_missing");
+  // rate() は分母0を1として扱うため、空のgolden fixtureを完全一致と誤認しないよう
+  // ゲート側で必須評価軸の実データ件数を確認する。
+  if (summary.selection.total === 0) reasons.push("document_selection_cases_missing");
+  if (summary.metricExact.total === 0) reasons.push("critical_metrics_missing");
+  if (summary.period.total === 0) reasons.push("period_cases_missing");
+  if (summary.consolidation.total === 0) reasons.push("consolidation_cases_missing");
+  if (summary.referencePageCoverage.total === 0) reasons.push("reference_pages_missing");
   if (summary.selection.rate !== 1) reasons.push("document_selection_not_exact");
   if (summary.metricExact.rate !== 1) reasons.push("critical_metrics_not_exact");
   if (summary.unit.rate !== 1) reasons.push("metric_units_not_exact");

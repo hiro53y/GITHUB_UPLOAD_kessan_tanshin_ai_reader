@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyVerifiedXbrlToReport } from "../src/lib/financialFacts";
+import { applyVerifiedXbrlToReport, financialFactsToAiFacts } from "../src/lib/financialFacts";
 import { analyzeDisclosureText } from "../src/lib/ruleAnalyzer";
 import type { PdfExtractQuality, PdfPageQuality } from "../src/lib/types";
 import type { XbrlExtractResult } from "../src/lib/xbrlExtract";
@@ -64,6 +64,30 @@ describe("統一financial facts", () => {
     expect(report.financialFacts?.uncertainty.join(" ")).toContain("配当表ページ");
   });
 
+  it("予想ページの大きな数値を配当60円の根拠と誤認しない", () => {
+    const high: PdfPageQuality = { score: 100, flags: [], tableLike: true, financialTableCandidate: true, lineCount: 10 };
+    const ambiguous: PdfPageQuality = { score: 70, flags: ["table_ambiguous"], tableLike: true, financialTableCandidate: false, lineCount: 8 };
+    const report = analyzeDisclosureText({
+      pages: [
+        { pageNumber: 1, text: "2026年3月期 決算短信〔日本基準〕（連結）\n（単位：百万円）\n連結業績予想\n通期 60000 5.0 9000 6.0 9200 7.0 7000 8.0\n予想売上高 60000", quality: high },
+        { pageNumber: 2, text: `${positiveText}\n配当予想からの修正の有無：無\n2026年3月期（予想） 0 0 0 60 60`, quality: ambiguous }
+      ],
+      quality: { score: 85, flags: ["table_ambiguous"], emptyPageRate: 0, ambiguousTablePages: [2], safeForAutomaticFacts: true }
+    });
+
+    expect(report.financialFacts?.dividendAnnualYen).toBeUndefined();
+    expect(report.financialFacts?.dividendYearEndYen).toBeUndefined();
+    expect(report.financialFacts?.uncertainty.join(" ")).toContain("配当表ページ");
+  });
+
+  it("業績予想の予想行だけでは配当として抽出しない", () => {
+    const report = reportFrom(`${positiveText}\n連結業績予想\n2027年3月期（予想） 60000 5.0 9000 6.0 9200 7.0 7000 8.0`);
+
+    expect(report.financialFacts?.dividendAnnualYen).toBeUndefined();
+    expect(report.financialFacts?.dividendYearEndYen).toBeUndefined();
+    expect(report.freeAiDigest.dividendLine).toBeUndefined();
+  });
+
   it("検証済みXBRLを採用したら、数値・判定・要約・根拠を同じfactsから再生成する", () => {
     const report = reportFrom(positiveText);
     expect(report.freeAiDigest.verdict).toBe("good");
@@ -96,6 +120,33 @@ describe("統一financial facts", () => {
     expect(report.oneLineSummary).toContain("10.0%減");
     expect(report.freeAiDigest.keyFigures.join(" ")).toContain("XBRL CurrentConsolidatedDuration");
     expect(report.financialFacts?.quality).toBe("high");
+  });
+
+  it("XBRLに成長率factがない場合は同期間のPDF成長率を保持する", () => {
+    const report = reportFrom(positiveText);
+    const xbrl: XbrlExtractResult = {
+      ok: true,
+      unit: "百万円",
+      source: "summary",
+      performance: {
+        period: "2026-03-31", periodStart: "2025-04-01", periodEnd: "2026-03-31",
+        sales: "55000", salesGrowth: "", operatingProfit: "8500", operatingProfitGrowth: "",
+        ordinaryProfit: "8700", ordinaryProfitGrowth: "", netProfit: "6300", netProfitGrowth: "",
+        source: "summary", context: "CurrentConsolidatedDuration", contextKind: "current",
+        consolidation: "consolidated", quality: "high", uncertainty: []
+      }
+    };
+
+    expect(applyVerifiedXbrlToReport(report, xbrl)).toEqual({ applied: true, reasons: [] });
+    expect(report.financialFacts?.performance?.metrics.sales?.source).toBe("xbrl");
+    expect(report.financialFacts?.performance?.metrics.sales?.growthRate).toBe(10.5);
+    expect(report.financialFacts?.performance?.metrics.sales?.growthSource).toBe("pdf");
+    expect(report.financialFacts?.performance?.metrics.sales?.quality).toBe("medium");
+    expect(report.financialFacts?.performance?.source).toBe("mixed");
+    expect(report.financialFacts?.quality).toBe("medium");
+    expect(report.financialFacts?.uncertainty.join(" ")).toContain("PDF抽出値");
+    expect(financialFactsToAiFacts(report.financialFacts).find((fact) => fact.label === "実績売上高")?.source).toContain("成長率:PDF");
+    expect(report.freeAiDigest.verdict).toBe("good");
   });
 
   it("contextが不確実なXBRLはPDF factsを上書きしない", () => {
