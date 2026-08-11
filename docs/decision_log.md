@@ -1,5 +1,23 @@
 # 判断記録
 
+## 2026-08-11
+
+- 精度評価は、公式決算短信PDF 1件と合成回帰5件を `tests/fixtures/golden/` に固定し、資料選定・主要数値・単位・期間・連結区分は誤り0件を合格条件とした。曖昧な表は値を推測せず「不確実」とする。
+- PDFは文書全体の平均品質だけでなく、実績・予想・配当の各根拠ページ品質で個別に採否を決める。別ページの正常な表で曖昧ページを救済しない。
+- 金額単位は主要表直前の表記を採用し、億円・百万円・千円・円を円へ正規化する。単位を確認できない場合は百万円と仮定せず、主要数値の確定を抑止する。
+- XBRLは連結context、累計duration、Summaryファイルを優先し、3主要指標未満・期間不一致・連結区分不一致・JPY未確認の値でPDF factsを上書きしない。
+- AIはWorkers AI JSON Modeの構造化claimsのみを受け入れ、Workerとブラウザの両方でschema・根拠抜粋・ページ・数値トークン・禁止表現を検証する。不合格応答は表示せずルール要約へフォールバックする。
+- 精度向上版は一時的に別フォルダーで検証したが、ユーザー指定によりGit管理済みの正本 `deliverables/GITHUB_UPLOAD_kessan_tanshin_ai_reader/` へ統合する。正本固有の銘柄マスタ検索・構造化レポート・同一オリジンAI経路を保持し、別フォルダーは統合検証後に削除する。
+
+## 2026-06-29
+
+- デバッグ精査により以下を修正（src/functions/worker のみ。deliverables は未変更）。
+  - 【重大】TDnet/JPXのHTMLが Shift_JIS（一部 EUC-JP）配信のため、`response.text()`（UTF-8既定）で会社名・タイトルが文字化けし、会社名フィルタ・候補抽出まで破綻していた。bytes取得→HTTPヘッダ→`<meta charset>`の順でcharset判定しデコードする処理を `src/lib/utils.ts`・`functions/lib/jpxDisclosures.ts`・`worker/src/jpxDisclosures.ts` に追加。
+  - 【中】`functions/api/proxy.ts` の `.pdf` ワイルドカード経路がプライベート/メタデータIPへ到達できるSSRFリスクだったため、`isPrivateHost()` を追加して localhost/RFC1918/リンクローカル/CGNAT/IPv6内部を遮断。
+  - 【重大】XBRL金額の単位換算バグを修正。`xbrlExtract.ts` の `toDisplay` が `decimals`（精度メタデータ）を値の単位と取り違え、円全額の値を「百万円」とみなしていた。下流 `App.tsx` の `fmtAmount` が百万円→円で×1,000,000するため、全金額が1,000,000倍過大（例: 売上10.59兆円→「10,586,781兆円」）になっていた。換算元を `"円"` 固定に変更。
+- 判断根拠（XBRL単位）: 実例 `<ix:nonFraction name="tse-ed-t:NetSales" unitRef="JPY" scale="6" decimals="-6">10,586,781</ix:nonFraction>` より、iXBRLは表示値(百万円)×10^scale=円全額、非インラインXBRLも unitRef=JPY の円全額格納と確認（XBRL仕様）。`parseIxbrlFacts` の scale 適用は正しく、iXBRL経路と .xbrl経路は整合（当初疑った二重スケーリングは誤診）。真因は両経路共通の下流換算にあった。
+- 注記: 本環境のサンドボックス(Linuxマウント)は当日Edit済みファイルを末尾切れの古いスナップショットで保持し、`tsc`/`vitest` が当該4ファイルでのみ偽の構文エラーを出す。Windows実体は完結・整合を確認済み。最終的な `npm run build` 緑確認は実機推奨。
+
 ## 2026-06-25
 
 - 最新決算のJPX履歴検索は最低120日とする。理由: 30日設定が保存されていると、5451（ヨドコウ）の2026年5月11日公表資料が2026年6月25日時点で期間外となり、公開資料が存在しても0件になるため。

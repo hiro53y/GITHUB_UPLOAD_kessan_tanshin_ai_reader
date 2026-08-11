@@ -1,22 +1,12 @@
-/**
- * 同一オリジンのAI要約エンドポイント（Cloudflare Pages Functions）。
- * 外部Worker URLを設定しなくても、Pages に AI バインディング（変数名: AI）を
- * 追加するだけでAI要約が動く。バインディング未設定時は ai_binding_missing を返し、
- * クライアントはAI要約をスキップ扱いにする（分析自体は止めない）。
- *
- * 設定方法: Cloudflare ダッシュボード → Pages プロジェクト → Settings → Functions →
- *           Workers AI バインディングを追加（変数名 AI）
- */
-import { runAiSummarize, type AiSummarizeRequestBody } from "../../lib/aiSummarize";
+/** 同一オリジンのWorkers AI要約エンドポイント（Cloudflare Pages Functions）。 */
+import { runAiSummarize, type AiValidationResult } from "../../lib/aiSummarize";
 
 type PagesContext = {
   request: Request;
-  env: {
-    AI?: {
-      run(model: string, input: Record<string, unknown>): Promise<{ response?: string }>;
-    };
-  };
+  env: { AI?: Ai };
 };
+
+const MAX_AI_BODY_BYTES = 128 * 1024;
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -31,23 +21,58 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
+function jsonAiFailure(error: string, status: number, validation: AiValidationResult): Response {
+  return jsonResponse({ ok: false, status: "error", error, validation }, status);
+}
+
+async function readBoundedJson(request: Request): Promise<unknown> {
+  const contentLength = Number(request.headers.get("Content-Length") || "0");
+  if (!Number.isFinite(contentLength) || contentLength < 0 || contentLength > MAX_AI_BODY_BYTES) {
+    throw new Error("body_too_large");
+  }
+  const reader = request.body?.getReader();
+  if (!reader) throw new Error("invalid_json");
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    for (;;) {
+      const next = await reader.read();
+      if (next.done) break;
+      size += next.value.byteLength;
+      if (size > MAX_AI_BODY_BYTES) throw new Error("body_too_large");
+      chunks.push(next.value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return JSON.parse(new TextDecoder().decode(bytes));
+}
+
 export async function onRequest(context: PagesContext): Promise<Response> {
   const { request, env } = context;
   if (request.method === "OPTIONS") return jsonResponse({});
-  if (request.method !== "POST") return jsonResponse({ ok: false, error: "method_not_allowed" }, 405);
-
+  if (request.method !== "POST") {
+    return jsonAiFailure("method_not_allowed", 405, { valid: false, errors: ["method_not_allowed"] });
+  }
   if (!env.AI) {
-    return jsonResponse({ ok: false, error: "ai_binding_missing" }, 501);
+    return jsonAiFailure("ai_binding_missing", 501, { valid: false, errors: ["ai_request_failed"] });
   }
 
-  let body: AiSummarizeRequestBody;
+  let body: unknown;
   try {
-    body = (await request.json()) as AiSummarizeRequestBody;
-  } catch {
-    return jsonResponse({ ok: false, error: "invalid_json" }, 400);
+    body = await readBoundedJson(request);
+  } catch (error) {
+    const tooLarge = error instanceof Error && error.message === "body_too_large";
+    const code = tooLarge ? "body_too_large" : "invalid_json";
+    return jsonAiFailure(code, tooLarge ? 413 : 400, { valid: false, errors: [code] });
   }
 
   const result = await runAiSummarize(env.AI, body);
-  if (!result.ok) return jsonResponse({ ok: false, error: result.error }, result.status);
-  return jsonResponse({ ok: true, summary: result.summary, model: result.model });
+  return jsonResponse(result.body, result.status);
 }

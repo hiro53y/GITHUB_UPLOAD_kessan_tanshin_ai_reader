@@ -5,12 +5,15 @@ import type {
   FreeAiDigest,
   FreeAiVerdict,
   KeyMetricRow,
+  PdfExtractQuality,
+  PdfPageQuality,
   SourceCheckpoint,
   TopicAnalysis,
   TopicCategory,
   WarningItem
 } from "./types";
 import { buildAiPrompt, DISCLAIMER } from "./promptBuilder";
+import { createPdfFinancialFacts, rebuildReportFromFinancialFacts } from "./financialFacts";
 import { buildStructuredReport } from "./structuredReport";
 import { compactText, unique } from "./utils";
 
@@ -115,6 +118,7 @@ type FinancialMetricRow = {
 };
 
 type ForecastMetricRow = {
+  period?: string;
   sales: string;
   salesGrowth: string;
   operatingProfit: string;
@@ -140,9 +144,9 @@ type FinancialDigestBase = {
   forecastMetrics: KeyMetricRow[];
   dividendLine?: string;
   forecastRevisionLine?: string;
-  marginLine?: string;
-  progressLines?: string[];
-  equityLine?: string;
+  unit: AmountUnit;
+  dividendAnnual?: string;
+  dividendYearEnd?: string;
 };
 
 function findKeywordPages(pages: Array<{ pageNumber: number; text: string }>, keywords: string[]): Array<{ pageNumber: number; keyword: string; text: string }> {
@@ -186,10 +190,49 @@ function analyzeTopics(pages: Array<{ pageNumber: number; text: string }>): Topi
   });
 }
 
+function warningOccurrenceIsActionable(text: string, keyword: string, label: string): boolean {
+  let offset = 0;
+  while (offset < text.length) {
+    const index = text.indexOf(keyword, offset);
+    if (index < 0) return false;
+    offset = index + keyword.length;
+
+    const lineStart = text.lastIndexOf("\n", index) + 1;
+    const nextBreak = text.indexOf("\n", index);
+    const lineEnd = nextBreak < 0 ? text.length : nextBreak;
+    const line = text.slice(lineStart, lineEnd);
+    const context = text.slice(Math.max(0, index - 80), Math.min(text.length, index + keyword.length + 180));
+    const compactContext = context.replace(/[\s　]+/g, "");
+    const afterKeyword = text.slice(index + keyword.length, Math.min(text.length, index + keyword.length + 240));
+    const nextHeading = afterKeyword.search(/\n\s*[（(][^\n）)]{2,50}[）)]/u);
+    const compactSection = (nextHeading >= 0 ? afterKeyword.slice(0, nextHeading) : afterKeyword)
+      .replace(/[\s　]+/g, "");
+
+    // 目次の見出しはリスクの存在を意味しない。
+    const tableOfContentsEntry = /[…⋯\.・·]{3,}\s*[0-9０-９]+\s*$/u.test(line)
+      || /(?:^|\n)\s*目次\s*(?:\n|$)/u.test(text.slice(0, 120));
+    // 「該当なし」の注記見出しや、リスクが後退・解消した記述は警告にしない。
+    const explicitAbsence = (label === "継続企業の前提" || label === "重要な後発事象")
+      && /該当事項(?:は)?(?:ありません|ございません|なし)|該当なし|該当事項なし/u.test(compactSection);
+    const explicitlyNegated = new RegExp(`${keyword}(?:に関する(?:事項|注記)?)?(?:は|が|を)?(?:ありません|ございません|ない|なし)`, "u").test(compactContext);
+    const sentenceStart = Math.max(text.lastIndexOf("。", index), text.lastIndexOf("\n", index)) + 1;
+    const periodEnd = text.indexOf("。", index);
+    const sentenceEnd = periodEnd < 0 ? Math.min(text.length, index + keyword.length + 160) : periodEnd + 1;
+    const compactSentence = text.slice(sentenceStart, sentenceEnd).replace(/[\s　]+/g, "");
+    const deniedInSentence = compactSentence.includes(keyword)
+      && /(?:計上|発生|存在|該当|見込|予定)(?:し|して)?(?:おりません|いません|ません|ない|なし)/u.test(compactSentence);
+    const uncertaintyReceded = label === "不確実性" && /不確実性(?:が|は)?(?:後退|低下|縮小|解消)/u.test(compactContext);
+
+    if (!tableOfContentsEntry && !explicitAbsence && !explicitlyNegated && !deniedInSentence && !uncertaintyReceded) return true;
+  }
+  return false;
+}
+
 function analyzeWarnings(pages: Array<{ pageNumber: number; text: string }>): WarningItem[] {
   return warningRules
     .map((rule) => {
-      const hits = findKeywordPages(pages, rule.keywords);
+      const hits = findKeywordPages(pages, rule.keywords)
+        .filter((hit) => warningOccurrenceIsActionable(hit.text, hit.keyword, rule.label));
       if (!hits.length) return undefined;
       return {
         level: rule.level,
@@ -306,13 +349,14 @@ function normalizeGrowth(value: string): string {
 
 function growthNumber(value: string): number | undefined {
   const normalized = normalizeGrowth(value).replace("%", "");
+  if (!normalized) return undefined;
   const parsed = Number(normalized);
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
 function growthPhrase(value: string): string {
   const parsed = growthNumber(value);
-  if (typeof parsed !== "number") return `${value}%`;
+  if (typeof parsed !== "number") return "増減率不明";
   if (parsed < 0) return `${Math.abs(parsed).toFixed(1)}%減`;
   if (parsed > 0) return `${parsed.toFixed(1)}%増`;
   return "横ばい";
@@ -326,7 +370,7 @@ function growthTone(value: string): KeyMetricRow["growthTone"] {
   return "flat";
 }
 
-type AmountUnit = "百万円" | "千円" | "円";
+type AmountUnit = "億円" | "百万円" | "千円" | "円" | "不明";
 
 /**
  * 数値を本来の通貨単位（百万円・千円・円）に対して、読みやすい億円/百万円/円に整形。
@@ -337,8 +381,9 @@ function formatYenAmount(rawValue: string, unit: AmountUnit = "百万円"): stri
   const cleaned = rawValue.replace(/[△▲]/g, "-").replace(/,/g, "").trim();
   const num = Number(cleaned);
   if (!Number.isFinite(num)) return `${rawValue}${unit}`;
+  if (unit === "不明") return `${rawValue}（単位不明）`;
   // 円相当に正規化
-  const yen = unit === "百万円" ? num * 1_000_000 : unit === "千円" ? num * 1_000 : num;
+  const yen = unit === "億円" ? num * 100_000_000 : unit === "百万円" ? num * 1_000_000 : unit === "千円" ? num * 1_000 : num;
   const absYen = Math.abs(yen);
   if (absYen >= 1_000_000_000_000) {
     return `${(yen / 1_000_000_000_000).toLocaleString("ja-JP", { maximumFractionDigits: 2 })}兆円`;
@@ -355,15 +400,27 @@ function formatYenAmount(rawValue: string, unit: AmountUnit = "百万円"): stri
   return `${yen.toLocaleString("ja-JP")}円`;
 }
 
-/** 決算短信本文から「（単位：百万円）」「単位:千円」等を検出して通貨単位を判定 */
+/** 主要業績表の直前にある「（単位：百万円）」等を優先して通貨単位を判定。 */
 function detectAmountUnit(text: string): AmountUnit {
-  if (/単位[:：]?\s*千円/.test(text) || /[（(]\s*千円\s*[）)]/.test(text)) return "千円";
-  if (/単位[:：]?\s*[ＭM]?円(?!万)/.test(text) || /[（(]\s*円\s*[）)]/.test(text)) return "円";
-  return "百万円";
+  const unitMatches = Array.from(text.matchAll(/(?:単位[:：]?\s*|[（(]\s*)(億円|百万円|千円|円)\s*[）)]?/gu))
+    .map((match) => ({ index: match.index, unit: match[1] as AmountUnit }));
+  if (!unitMatches.length) return "不明";
+
+  const rowMatches = Array.from(text.matchAll(/20\d{2}年[0-9０-９]+月期(?:第[0-9０-９一二三四１-４]+四半期)?[^\n]{0,500}/gu));
+  const financialRow = rowMatches.find((match) =>
+    Array.from(match[0].matchAll(/[△▲\-]?\d[\d,]*(?:\.\d+)?/gu)).length >= 9
+  );
+  if (financialRow?.index === undefined) return unitMatches[0].unit;
+
+  const preceding = unitMatches.filter((match) => (match.index ?? 0) <= financialRow.index!);
+  if (preceding.length) return preceding.at(-1)!.unit;
+  return unitMatches.reduce((closest, current) =>
+    Math.abs((current.index ?? 0) - financialRow.index!) < Math.abs((closest.index ?? 0) - financialRow.index!) ? current : closest
+  ).unit;
 }
 
-function metricWithGrowth(label: string, value: string, growth: string): string {
-  return `${label}${formatYenAmount(value)}（${growthPhrase(growth)}）`;
+function metricWithGrowth(label: string, value: string, growth: string, unit: AmountUnit): string {
+  return `${label}${formatYenAmount(value, unit)}（${growthPhrase(growth)}）`;
 }
 
 /**
@@ -379,7 +436,18 @@ function findValueAfter(
 ): { value: string; growth: string } | undefined {
   const idx = text.indexOf(label);
   if (idx < 0) return undefined;
-  const after = text.slice(idx + label.length, idx + label.length + lookahead);
+  const rawAfter = text.slice(idx + label.length, idx + label.length + lookahead);
+  const nextFinancialLabel = [
+    ...numberLabels,
+    "事業利益",
+    "税引前利益",
+    "親会社の所有者に帰属する当期利益"
+  ].flatMap((candidate) => {
+    const nextIndex = rawAfter.indexOf(candidate);
+    return nextIndex >= 0 ? [nextIndex] : [];
+  }).sort((a, b) => a - b)[0];
+  // 次の指標名を越えて数値を探すと、その指標値を成長率として盗用するため境界で打ち切る。
+  const after = nextFinancialLabel === undefined ? rawAfter : rawAfter.slice(0, nextFinancialLabel);
   // 単位を明示的にキャプチャ：金額単位（百万円・千円・億円・円・株・倍）/ 成長率単位（%・％・ポイント）
   const tokenRegex = /([△▲\-]?\d[\d,]*(?:\.\d+)?)\s*(百万円|千円|億円|円|株|倍|[%％]|ポイント)?/gu;
   let value = "";
@@ -407,7 +475,7 @@ function findValueAfter(
     }
   }
   if (!value) return undefined;
-  return { value, growth: growth || "0" };
+  return { value, growth };
 }
 
 function findFirstValueAfter(text: string, labels: string[]): { value: string; growth: string } | undefined {
@@ -485,6 +553,7 @@ function parseForecastByLabels(text: string): ForecastMetricRow | undefined {
   if (!sales || !op || !ord || !net) return undefined;
 
   return {
+    period: segment.match(/20\d{2}年[0-9０-９]+月期/u)?.[0],
     sales: sales.value,
     salesGrowth: sales.growth,
     operatingProfit: op.value,
@@ -501,7 +570,7 @@ function parseFinancialDigest(rawText: string): FinancialDigestBase {
   const unit = detectAmountUnit(rawText);
   const metricValue = "([△▲\\-]?\\d[\\d,]*(?:\\.\\d+)?)";
   const performanceRegex = new RegExp(
-    `(20\\d{2}年[0-9０-９]+月期第[0-9０-９一二三四１-４]+四半期)\\s+${metricValue}\\s+${metricValue}\\s+${metricValue}\\s+${metricValue}\\s+${metricValue}\\s+${metricValue}\\s+${metricValue}\\s+${metricValue}`
+    `(20\\d{2}年[0-9０-９]+月期(?:第[0-9０-９一二三四１-４]+四半期)?)\\s+${metricValue}\\s+${metricValue}\\s+${metricValue}\\s+${metricValue}\\s+${metricValue}\\s+${metricValue}\\s+${metricValue}\\s+${metricValue}`
   );
   const performanceMatch = text.match(performanceRegex);
   // パターンA: 期間ラベル+8値連続行（pdfjs が表を行順に取れた場合）
@@ -524,8 +593,12 @@ function parseFinancialDigest(rawText: string): FinancialDigestBase {
     `通期\\s+${metricValue}\\s+${metricValue}\\s+${metricValue}\\s+${metricValue}\\s+${metricValue}\\s+${metricValue}\\s+${metricValue}\\s+${metricValue}`
   );
   const forecastMatch = text.match(forecastRegex);
+  const forecastPeriod = forecastMatch?.index === undefined
+    ? undefined
+    : Array.from(text.slice(Math.max(0, forecastMatch.index - 300), forecastMatch.index).matchAll(/20\d{2}年[0-9０-９]+月期/gu)).at(-1)?.[0];
   const forecast: ForecastMetricRow | undefined = forecastMatch
     ? {
+        period: forecastPeriod,
         sales: forecastMatch[1],
         salesGrowth: forecastMatch[2],
         operatingProfit: forecastMatch[3],
@@ -546,9 +619,19 @@ function parseFinancialDigest(rawText: string): FinancialDigestBase {
     const m = text.match(/20\d{2}年[0-9０-９]+月期\s*[（(]\s*予想\s*[）)][\s\S]{0,400}/u);
     return m ? m[0] : text;
   })();
-  const dividendYearEnd = findValueAfter(dividendSegment, "期末")?.value;
-  const dividendAnnual = findValueAfter(dividendSegment, "年間")?.value
-    ?? findValueAfter(dividendSegment, "合計")?.value;
+  // 座標復元済みテキストでは「期末・合計」の見出しと予想行が別行になる。
+  // 予想行の末尾2値を期末・年間として優先し、従来の見出し近傍抽出をfallbackにする。
+  const dividendPredictionLine = rawText.match(/20\d{2}年[0-9０-９]+月期\s*[（(]\s*予想\s*[）)]([^\n]{0,240})/u)?.[1];
+  const dividendPredictionValues = dividendPredictionLine
+    ? Array.from(dividendPredictionLine.matchAll(/([△▲\-]?\d[\d,]*(?:\.\d+)?)/gu)).map((match) => match[1])
+    : [];
+  const dividendYearEnd = dividendPredictionValues.length >= 2
+    ? dividendPredictionValues.at(-2)
+    : findValueAfter(dividendSegment, "期末")?.value;
+  const dividendAnnual = dividendPredictionValues.length >= 2
+    ? dividendPredictionValues.at(-1)
+    : findValueAfter(dividendSegment, "年間")?.value
+      ?? findValueAfter(dividendSegment, "合計")?.value;
   const dividend = dividendYearEnd && dividendAnnual
     ? `期末${dividendYearEnd}円、年間${dividendAnnual}円`
     : dividendAnnual
@@ -564,11 +647,11 @@ function parseFinancialDigest(rawText: string): FinancialDigestBase {
     negativeCount >= 3 ? "weak" : positiveCount >= 3 ? "good" : positiveCount > 0 && negativeCount > 0 ? "mixed" : undefined;
 
   const performanceSummary = performance
-    ? `${performance.period}は${negativeCount >= 3 ? "減収・減益" : positiveCount >= 3 ? "増収・増益" : "強弱混在"}。${metricWithGrowth("売上高", performance.sales, performance.salesGrowth)}、${metricWithGrowth("営業利益", performance.operatingProfit, performance.operatingProfitGrowth)}、${metricWithGrowth("経常利益", performance.ordinaryProfit, performance.ordinaryProfitGrowth)}、${metricWithGrowth("純利益", performance.netProfit, performance.netProfitGrowth)}。`
+    ? `${performance.period}は${negativeCount >= 3 ? "減収・減益" : positiveCount >= 3 ? "増収・増益" : "強弱混在"}。${metricWithGrowth("売上高", performance.sales, performance.salesGrowth, unit)}、${metricWithGrowth("営業利益", performance.operatingProfit, performance.operatingProfitGrowth, unit)}、${metricWithGrowth("経常利益", performance.ordinaryProfit, performance.ordinaryProfitGrowth, unit)}、${metricWithGrowth("純利益", performance.netProfit, performance.netProfitGrowth, unit)}。`
     : undefined;
 
   const forecastSummary = forecast
-    ? `通期予想は${metricWithGrowth("売上高", forecast.sales, forecast.salesGrowth)}、${metricWithGrowth("営業利益", forecast.operatingProfit, forecast.operatingProfitGrowth)}、${metricWithGrowth("純利益", forecast.netProfit, forecast.netProfitGrowth)}。${forecastRevision === "無" ? "直近予想からの修正はありません。" : forecastRevision === "有" ? "直近予想から修正されています。" : ""}`
+    ? `通期予想は${metricWithGrowth("売上高", forecast.sales, forecast.salesGrowth, unit)}、${metricWithGrowth("営業利益", forecast.operatingProfit, forecast.operatingProfitGrowth, unit)}、${metricWithGrowth("純利益", forecast.netProfit, forecast.netProfitGrowth, unit)}。${forecastRevision === "無" ? "直近予想からの修正はありません。" : forecastRevision === "有" ? "直近予想から修正されています。" : ""}`
     : undefined;
 
   const dividendSummary = dividend
@@ -603,48 +686,6 @@ function parseFinancialDigest(rawText: string): FinancialDigestBase {
       ]
     : [];
 
-  // ─── アプリ側で確実に計算する派生指標（LLMに数値を捏造させないための土台） ───
-  const toNumber = (raw: string): number | undefined => {
-    const parsed = Number(raw.replace(/[△▲]/g, "-").replace(/,/g, "").trim());
-    return Number.isFinite(parsed) ? parsed : undefined;
-  };
-
-  // 営業利益率 = 営業利益 ÷ 売上高
-  let marginLine: string | undefined;
-  if (performance) {
-    const salesNum = toNumber(performance.sales);
-    const opNum = toNumber(performance.operatingProfit);
-    if (salesNum && opNum !== undefined && salesNum > 0) {
-      const margin = (opNum / salesNum) * 100;
-      if (margin > -100 && margin < 100) {
-        marginLine = `営業利益率は約${margin.toFixed(1)}%（${performance.operatingProfit}${unit}÷${performance.sales}${unit}）`;
-      }
-    }
-  }
-
-  // 通期予想に対する進捗率（四半期・中間決算のみ意味を持つ）
-  const progressLines: string[] = [];
-  if (performance && forecast && /四半期/.test(performance.period)) {
-    const pairs: Array<[string, string, string]> = [
-      ["売上高", performance.sales, forecast.sales],
-      ["営業利益", performance.operatingProfit, forecast.operatingProfit]
-    ];
-    for (const [label, actualRaw, forecastRaw] of pairs) {
-      const actual = toNumber(actualRaw);
-      const target = toNumber(forecastRaw);
-      if (actual !== undefined && target && target > 0) {
-        const progress = (actual / target) * 100;
-        if (progress > 0 && progress <= 150) {
-          progressLines.push(`${label}進捗率は${progress.toFixed(1)}%（${actualRaw}${unit}÷${forecastRaw}${unit}）`);
-        }
-      }
-    }
-  }
-
-  // 自己資本比率（%表記を直接抽出）
-  const equityMatch = text.match(/自己資本比率[^0-9△▲\-]{0,30}([0-9]{1,2}(?:\.[0-9])?)\s*[%％]/u);
-  const equityLine = equityMatch ? `自己資本比率は${equityMatch[1]}%` : undefined;
-
   const dividendLine = dividend
     ? `配当予想 ${dividend}${dividendRevision === "有" ? "（直近予想から修正あり）" : dividendRevision === "無" ? "（修正なし）" : ""}`
     : undefined;
@@ -671,9 +712,9 @@ function parseFinancialDigest(rawText: string): FinancialDigestBase {
     forecastMetrics,
     dividendLine,
     forecastRevisionLine,
-    marginLine,
-    progressLines: progressLines.length ? progressLines : undefined,
-    equityLine
+    unit,
+    dividendAnnual,
+    dividendYearEnd
   };
 }
 
@@ -715,38 +756,12 @@ function decideConfidence(rawTextLength: number, detectedTopics: number): Analys
   return "low";
 }
 
-/**
- * 一言サマリー。増収/減収 × 増益/横ばい/減益 の組み合わせから
- * 「増収だが営業利益は横ばい」のような自然な一文を生成する。
- */
 function buildSummary(topics: TopicAnalysis[], warnings: WarningItem[], financialDigest: FinancialDigestBase): string {
+  // 数値パース成功時：判定 + 業績一行のみ（短く）
   if (financialDigest.performance) {
     const p = financialDigest.performance;
-    const sales = growthNumber(p.salesGrowth) ?? 0;
-    const op = growthNumber(p.operatingProfitGrowth) ?? 0;
-    const net = growthNumber(p.netProfitGrowth) ?? 0;
-
-    const salesPhrase = sales > 1 ? "増収" : sales < -1 ? "減収" : "売上横ばい";
-    const opPhrase = op > 1 ? `営業利益${op.toFixed(1)}%増` : op < -1 ? `営業利益${Math.abs(op).toFixed(1)}%減` : "営業利益は横ばい";
-
-    let core: string;
-    if (sales > 1 && op > 1) core = `増収増益。売上${sales.toFixed(1)}%増・${opPhrase}`;
-    else if (sales > 1 && op >= -1) core = `増収だが${opPhrase}`;
-    else if (sales > 1) core = `増収減益。${opPhrase}`;
-    else if (sales < -1 && op < -1) core = `減収減益。売上${Math.abs(sales).toFixed(1)}%減・${opPhrase}`;
-    else if (sales < -1 && op > 1) core = `減収ながら増益。${opPhrase}`;
-    else if (op > 1) core = `${salesPhrase}ながら${opPhrase}`;
-    else if (op < -1) core = `${salesPhrase}、${opPhrase}`;
-    else core = "売上・利益とも横ばい圏";
-
-    // 純利益が営業利益と大きく乖離しているときは補足
-    const netNote =
-      Math.abs(net - op) >= 15 ? (net > op ? `、純利益は${net > 0 ? `${net.toFixed(1)}%増` : "改善"}` : `、純利益は${net < 0 ? `${Math.abs(net).toFixed(1)}%減` : "伸び悩み"}`) : "";
-
-    // 高レベル警告があれば1つだけ添える
-    const highWarning = warnings.find((w) => w.level === "high");
-    const tail = highWarning ? `。${highWarning.label}に注意` : "";
-    return `${core}${netNote}${tail}。`;
+    const judgement = verdictLabel(financialDigest.verdict || "unknown");
+    return `${judgement}。${p.period}は売上${growthPhrase(p.salesGrowth)}・営業利益${growthPhrase(p.operatingProfitGrowth)}・純利益${growthPhrase(p.netProfitGrowth)}。`;
   }
 
   // 数値パース不可の場合
@@ -869,20 +884,38 @@ function buildFreeAiDigest(
     forecastMetrics: financialDigest.forecastMetrics,
     dividendLine: financialDigest.dividendLine,
     forecastRevisionLine: financialDigest.forecastRevisionLine,
-    marginLine: financialDigest.marginLine,
-    progressLines: financialDigest.progressLines,
-    equityLine: financialDigest.equityLine,
     method: "端末内キーワード解析（外部APIなし）"
   };
+}
+
+function detectConsolidation(text: string): "consolidated" | "non_consolidated" | "unknown" {
+  const header = text.slice(0, 2500);
+  if (/〔[^〕]*(?:非連結|個別)[^〕]*〕|[（(](?:非連結|個別)[）)]/.test(header)) return "non_consolidated";
+  if (/〔[^〕]*〕\s*[（(]連結[）)]|[（(]連結[）)]|連結業績|連結経営成績|連結財務/.test(header)) return "consolidated";
+  if (/非連結|個別決算/.test(header)) return "non_consolidated";
+  return "unknown";
+}
+
+function findEvidencePage(
+  pages: Array<{ pageNumber: number; text: string }>,
+  anchors: string[]
+): number | undefined {
+  return pages.find((page) => anchors.every((anchor) => page.text.includes(anchor)))?.pageNumber
+    ?? pages.find((page) => anchors.some((anchor) => page.text.includes(anchor)))?.pageNumber;
 }
 
 export function analyzeDisclosureText(input: {
   ticker?: string;
   companyName?: string;
   disclosure?: DisclosureItem;
-  pages: Array<{ pageNumber: number; text: string }>;
+  pages: Array<{ pageNumber: number; text: string; lines?: Array<{ text: string }>; quality?: PdfPageQuality }>;
+  quality?: PdfExtractQuality;
 }): AnalysisReport {
-  const pages = input.pages;
+  const pages = input.pages.map((page) => ({
+    pageNumber: page.pageNumber,
+    text: page.lines?.length ? page.lines.map((line) => line.text).join("\n") : page.text,
+    quality: page.quality
+  }));
   const rawText = pages.map((page) => page.text).join("\n");
   const topics = analyzeTopics(pages);
   const warnings = analyzeWarnings(pages);
@@ -919,6 +952,37 @@ export function analyzeDisclosureText(input: {
     aiPrompt,
     disclaimer: DISCLAIMER
   };
-  report.structuredReport = buildStructuredReport(report);
-  return report;
+  const performancePage = financialDigest.performance
+    ? findEvidencePage(pages, [financialDigest.performance.period, financialDigest.performance.sales, financialDigest.performance.operatingProfit])
+    : undefined;
+  const forecastPage = financialDigest.forecast
+    ? findEvidencePage(pages, ["予想", financialDigest.forecast.sales, financialDigest.forecast.operatingProfit])
+    : undefined;
+  const dividendPage = financialDigest.dividend
+    ? findEvidencePage(pages, [
+        "予想",
+        financialDigest.dividendAnnual || "年間",
+        financialDigest.dividendYearEnd || "期末"
+      ])
+    : undefined;
+  const pageQuality = (pageNumber: number | undefined) => pages.find((page) => page.pageNumber === pageNumber)?.quality;
+  const financialFacts = createPdfFinancialFacts({
+    performance: financialDigest.performance,
+    forecast: financialDigest.forecast,
+    unit: financialDigest.unit,
+    consolidated: detectConsolidation(rawText),
+    performancePage,
+    forecastPage,
+    forecastRevision: financialDigest.forecastRevision,
+    dividendRevision: financialDigest.dividendRevision,
+    dividendAnnual: financialDigest.dividendAnnual,
+    dividendYearEnd: financialDigest.dividendYearEnd,
+    extractQuality: input.quality,
+    performancePageQuality: pageQuality(performancePage),
+    forecastPageQuality: pageQuality(forecastPage),
+    dividendPageQuality: pageQuality(dividendPage)
+  });
+  const rebuilt = rebuildReportFromFinancialFacts(report, financialFacts);
+  rebuilt.structuredReport = buildStructuredReport(rebuilt);
+  return rebuilt;
 }

@@ -11,10 +11,11 @@ import { SettingsPage } from "./pages/SettingsPage";
 import { fetchAiSummary } from "./lib/aiSummarizer";
 import { fetchLatestDisclosureByTicker } from "./lib/disclosureFetcher";
 import { extractPdfText } from "./lib/pdfExtract";
+import { applyVerifiedXbrlToReport, financialFactsToAiFacts } from "./lib/financialFacts";
 import { buildMarkdownReport } from "./lib/promptBuilder";
 import { analyzeDisclosureText } from "./lib/ruleAnalyzer";
-import { buildMetricsContext, buildStructuredReport, parseAiSummaryToStructured } from "./lib/structuredReport";
-import { extractXbrlMetrics, type XbrlExtractResult } from "./lib/xbrlExtract";
+import { buildStructuredReport } from "./lib/structuredReport";
+import { extractXbrlMetrics } from "./lib/xbrlExtract";
 import {
   clearHistory,
   deleteHistoryItem,
@@ -56,79 +57,6 @@ function migrateReport(report: AnalysisReport): AnalysisReport {
 
 function updateStepList(steps: LoadingStep[], id: number, status: LoadingStep["status"], detail?: string): LoadingStep[] {
   return steps.map((step) => (step.id === id ? { ...step, status, detail } : step));
-}
-
-/** XBRLから抽出した数値で AnalysisReport の主要数値・通期予想を上書きする（PDF解析より優先） */
-function applyXbrlOverridesToReport(report: AnalysisReport, xbrl: XbrlExtractResult): void {
-  const unit = xbrl.unit;
-  const fmtAmount = (raw: string): string => {
-    if (!raw) return "";
-    const cleaned = raw.replace(/[△▲]/g, "-").replace(/,/g, "").trim();
-    const num = Number(cleaned);
-    if (!Number.isFinite(num)) return `${raw}${unit}`;
-    const yen = unit === "百万円" ? num * 1_000_000 : unit === "千円" ? num * 1_000 : num;
-    const abs = Math.abs(yen);
-    if (abs >= 1_000_000_000_000) return `${(yen / 1_000_000_000_000).toLocaleString("ja-JP", { maximumFractionDigits: 2 })}兆円`;
-    if (abs >= 100_000_000) return `${(yen / 100_000_000).toLocaleString("ja-JP", { maximumFractionDigits: 1 })}億円`;
-    if (abs >= 1_000_000) return `${(yen / 1_000_000).toLocaleString("ja-JP", { maximumFractionDigits: 1 })}百万円`;
-    if (abs >= 10_000) return `${(yen / 10_000).toLocaleString("ja-JP", { maximumFractionDigits: 1 })}万円`;
-    return `${yen.toLocaleString("ja-JP")}円`;
-  };
-  const growthPhrase = (g: string): string => {
-    const n = Number(g.replace(/[▲△]/g, "-").replace(/％|%/g, ""));
-    if (!Number.isFinite(n)) return `${g}%`;
-    if (n < 0) return `${Math.abs(n).toFixed(1)}%減`;
-    if (n > 0) return `${n.toFixed(1)}%増`;
-    return "横ばい";
-  };
-  const growthTone = (g: string): "up" | "down" | "flat" | "unknown" => {
-    const n = Number(g.replace(/[▲△]/g, "-").replace(/％|%/g, ""));
-    if (!Number.isFinite(n)) return "unknown";
-    if (n < 0) return "down";
-    if (n > 0) return "up";
-    return "flat";
-  };
-
-  // ラベル単位で既存 keyMetrics に上書きマージ（部分XBRLでPDF結果を失わないため）
-  const mergeRows = (
-    base: typeof report.freeAiDigest.keyMetrics,
-    incoming: typeof report.freeAiDigest.keyMetrics
-  ): typeof report.freeAiDigest.keyMetrics => {
-    if (!incoming.length) return base;
-    const map = new Map(base.map((r) => [r.label, r]));
-    for (const r of incoming) map.set(r.label, r);
-    // 順序：売上高 → 営業利益 → 経常利益 → 純利益 を優先（リスト外ラベルは末尾）
-    const order = ["売上高", "営業利益", "経常利益", "純利益"];
-    const rank = (label: string) => {
-      const index = order.indexOf(label);
-      return index === -1 ? order.length : index;
-    };
-    return [...map.values()].sort((a, b) => rank(a.label) - rank(b.label));
-  };
-
-  if (xbrl.performance) {
-    const p = xbrl.performance;
-    const rows = [
-      p.sales ? { label: "売上高", value: fmtAmount(p.sales), growth: growthPhrase(p.salesGrowth), growthTone: growthTone(p.salesGrowth) } : null,
-      p.operatingProfit ? { label: "営業利益", value: fmtAmount(p.operatingProfit), growth: growthPhrase(p.operatingProfitGrowth), growthTone: growthTone(p.operatingProfitGrowth) } : null,
-      p.ordinaryProfit ? { label: "経常利益", value: fmtAmount(p.ordinaryProfit), growth: growthPhrase(p.ordinaryProfitGrowth), growthTone: growthTone(p.ordinaryProfitGrowth) } : null,
-      p.netProfit ? { label: "純利益", value: fmtAmount(p.netProfit), growth: growthPhrase(p.netProfitGrowth), growthTone: growthTone(p.netProfitGrowth) } : null
-    ].filter((r): r is NonNullable<typeof r> => r !== null);
-    report.freeAiDigest.keyMetrics = mergeRows(report.freeAiDigest.keyMetrics, rows);
-  }
-  if (xbrl.forecast) {
-    const f = xbrl.forecast;
-    const rows = [
-      f.sales ? { label: "売上高", value: fmtAmount(f.sales), growth: growthPhrase(f.salesGrowth), growthTone: growthTone(f.salesGrowth) } : null,
-      f.operatingProfit ? { label: "営業利益", value: fmtAmount(f.operatingProfit), growth: growthPhrase(f.operatingProfitGrowth), growthTone: growthTone(f.operatingProfitGrowth) } : null,
-      f.ordinaryProfit ? { label: "経常利益", value: fmtAmount(f.ordinaryProfit), growth: growthPhrase(f.ordinaryProfitGrowth), growthTone: growthTone(f.ordinaryProfitGrowth) } : null,
-      f.netProfit ? { label: "純利益", value: fmtAmount(f.netProfit), growth: growthPhrase(f.netProfitGrowth), growthTone: growthTone(f.netProfitGrowth) } : null
-    ].filter((r): r is NonNullable<typeof r> => r !== null);
-    report.freeAiDigest.forecastMetrics = mergeRows(report.freeAiDigest.forecastMetrics, rows);
-  }
-  report.freeAiDigest.method = `${report.freeAiDigest.method} + XBRL直接抽出`;
-  // 数値が更新されたため構造化レポートを組み直す
-  report.structuredReport = buildStructuredReport(report);
 }
 
 function makeManualDisclosure(input: { url?: string; fileName?: string; ticker?: string; companyName?: string }): DisclosureItem {
@@ -329,7 +257,8 @@ export default function App() {
         ticker: disclosure.ticker || sourceFetchResult?.ticker,
         companyName: disclosure.companyName || sourceFetchResult?.companyName,
         disclosure,
-        pages: pdf.pages
+        pages: pdf.pages,
+        quality: pdf.quality
       });
       setStep(6, "success", "重要語句検出完了");
 
@@ -339,8 +268,14 @@ export default function App() {
           addLog("XBRLから業績数値を抽出中…");
           const xbrl = await extractXbrlMetrics(disclosure.xbrlUrl, effectiveSignal);
           if (xbrl.ok) {
-            applyXbrlOverridesToReport(nextReport, xbrl);
-            addLog(`XBRL抽出成功（単位: ${xbrl.unit}）`);
+            const merged = applyVerifiedXbrlToReport(nextReport, xbrl);
+            if (merged.applied) {
+              nextReport.structuredReport = buildStructuredReport(nextReport);
+              addLog(`検証済みXBRLを統一factsへ反映しました（単位: ${xbrl.unit}）`);
+            } else {
+              const reason = merged.reasons.join(" / ") || "context・単位の品質条件を満たしませんでした";
+              addLog(`XBRLは抽出できましたが自動上書きを抑止しました: ${reason}`);
+            }
           } else if (xbrl.error) {
             addLog(`XBRL抽出失敗（PDF解析を採用）: ${xbrl.error}`);
           }
@@ -355,37 +290,59 @@ export default function App() {
       if (settings.aiSummaryEnabled) {
         setStep(7, "processing", "AI要約を生成中");
         addLog("Cloudflare Workers AI に要約をリクエストしました");
+        const requestedPages = Array.from(new Set([
+          ...nextReport.sourceCheckpoints.map((item) => item.pageNumber),
+          ...Object.values(nextReport.financialFacts?.performance?.metrics ?? {}).flatMap((fact) => fact?.pageNumber ? [fact.pageNumber] : []),
+          ...Object.values(nextReport.financialFacts?.forecast?.metrics ?? {}).flatMap((fact) => fact?.pageNumber ? [fact.pageNumber] : [])
+        ])).slice(0, 8);
+        const selectedPages = (requestedPages.length
+          ? requestedPages.flatMap((pageNumber) => pdf.pages.filter((page) => page.pageNumber === pageNumber))
+          : pdf.pages.slice(0, 6));
+        const selectedPageNumbers = new Set(selectedPages.map((page) => page.pageNumber));
+        const aiFacts = financialFactsToAiFacts(nextReport.financialFacts).map((fact) =>
+          fact.page && !selectedPageNumbers.has(fact.page) ? { ...fact, page: undefined } : fact
+        );
         const aiResult = await fetchAiSummary(
           settings.proxyUrl,
           {
-            text: pdf.rawText,
+            pages: selectedPages.map((page) => ({
+              page: page.pageNumber,
+              excerpt: compactText(page.lines?.map((line) => line.text).join("\n") || page.text, 2400)
+            })),
+            facts: aiFacts,
             ticker: nextReport.ticker,
             companyName: nextReport.companyName,
-            title: disclosure.title,
-            metrics: buildMetricsContext(nextReport)
+            title: disclosure.title
           },
+          undefined,
+          undefined,
+          undefined,
           effectiveSignal
         );
         if (aiResult.ok && aiResult.summary) {
           nextReport.aiSummary = aiResult.summary;
-          const methodLabel = `Workers AI (${aiResult.model || "llama-3.1-8b"})`;
-          const structured = parseAiSummaryToStructured(aiResult.summary, methodLabel);
-          if (structured) {
-            if (structured.oneLine) {
-              nextReport.oneLineSummary = structured.oneLine;
-            } else {
-              structured.oneLine = nextReport.oneLineSummary;
-            }
-            nextReport.structuredReport = structured;
-          }
+          nextReport.aiSummaryAudit = {
+            inputHash: aiResult.inputHash,
+            model: aiResult.model,
+            valid: aiResult.validation.valid,
+            errors: aiResult.validation.errors
+          };
           setStep(7, "success", `AI要約完了（${aiResult.model || "Workers AI"}）`);
           addLog("AI要約を取得しました");
-        } else if (aiResult.unavailable) {
-          setStep(7, "skipped", "AI未設定のため標準ルール分析を表示");
-          addLog(`AI要約は未設定のためスキップしました: ${aiResult.error || ""}`);
         } else {
-          setStep(7, "failed", "AI要約に失敗（標準ルール分析を表示）");
-          addLog(`AI要約失敗: ${aiResult.error || "不明なエラー"}`);
+          nextReport.aiSummaryAudit = {
+            inputHash: aiResult.inputHash,
+            model: aiResult.model,
+            valid: false,
+            errors: aiResult.validation.errors
+          };
+          if (aiResult.status === "fallback") {
+            setStep(7, "skipped", "検証不合格のため標準ルール分析を表示");
+            addLog(`AI応答を採用しませんでした: ${aiResult.error}`);
+          } else {
+            setStep(7, "failed", "AI要約に失敗（標準ルール分析を表示）");
+            addLog(`AI要約失敗: ${aiResult.error || "不明なエラー"}`);
+          }
         }
       } else {
         setStep(7, "skipped", "AI要約OFF");

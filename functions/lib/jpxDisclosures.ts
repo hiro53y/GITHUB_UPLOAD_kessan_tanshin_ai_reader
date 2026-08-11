@@ -10,8 +10,15 @@ export type JpxDisclosureRecord = {
   ticker: string;
   companyName: string;
   pdfUrl: string;
+  xbrlUrl?: string;
   sourceUrl: string;
 };
+
+export type JpxLookupState = "success" | "empty" | "truncated";
+export type JpxLookupResult = { companyName: string; disclosures: JpxDisclosureRecord[]; state: JpxLookupState; truncated: boolean };
+
+const JPX_PAGE_SIZE = 50;
+const JPX_MAX_PAGES = 6;
 
 export type JpxCompanySearchResult = {
   managerCode: string;
@@ -101,45 +108,90 @@ function isRelevantDisclosure(title: string): boolean {
   return /決算短信|四半期決算短信|決算説明|決算補足|業績予想|配当予想|剰余金の配当/.test(title);
 }
 
+type JpxRowAnchor = { url: URL; body: string };
+
+function parseRowAnchors(row: string): JpxRowAnchor[] {
+  const anchors: JpxRowAnchor[] = [];
+  for (const match of row.matchAll(/<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi)) {
+    try {
+      anchors.push({ url: new URL(match[1], JPX_BASE_URL), body: match[2] });
+    } catch {
+      // 壊れたhrefは当該アンカーだけ除外し、同じ行の他資産は解析する。
+    }
+  }
+  return anchors;
+}
+
+function hasPathExtension(anchor: JpxRowAnchor, extension: ".pdf" | ".zip"): boolean {
+  return anchor.url.pathname.toLowerCase().endsWith(extension);
+}
+
+function countDisclosureRows(html: string): number {
+  let count = 0;
+  for (const rowMatch of html.matchAll(/<tr\b[^>]*>[\s\S]*?<\/tr>/gi)) {
+    const row = rowMatch[0];
+    if (!/>\s*\d{4}\/\d{2}\/\d{2}\s*</.test(row)) continue;
+    if (parseRowAnchors(row).some((anchor) => hasPathExtension(anchor, ".pdf"))) count += 1;
+  }
+  return count;
+}
+
+function mergeSameIdRecords(current: JpxDisclosureRecord, incoming: JpxDisclosureRecord): JpxDisclosureRecord {
+  const currentIsCorrection = /訂正|差替/.test(current.title);
+  const incomingIsCorrection = /訂正|差替/.test(incoming.title);
+  const preferred = incomingIsCorrection && !currentIsCorrection ? incoming : current;
+  const supplement = preferred === current ? incoming : current;
+  return {
+    ...supplement,
+    ...preferred,
+    pdfUrl: preferred.pdfUrl || supplement.pdfUrl,
+    xbrlUrl: preferred.xbrlUrl || supplement.xbrlUrl
+  };
+}
+
 export function parseJpxDisclosureRows(
   html: string,
   input: { ticker: string; companyName: string; lookbackDays: number; now?: Date }
 ): JpxDisclosureRecord[] {
   const now = input.now ?? new Date();
   const cutoff = now.getTime() - input.lookbackDays * 24 * 60 * 60 * 1000;
-  const records: JpxDisclosureRecord[] = [];
-  const seen = new Set<string>();
+  const records = new Map<string, JpxDisclosureRecord>();
 
   for (const rowMatch of html.matchAll(/<tr\b[^>]*>[\s\S]*?<\/tr>/gi)) {
     const row = rowMatch[0];
-    const pdfMatch = row.match(/<a[^>]*href=["']([^"']+\.pdf(?:\?[^"']*)?)["'][^>]*>([\s\S]*?)<\/a>/i);
-    if (!pdfMatch) continue;
+    const anchors = parseRowAnchors(row);
+    const pdfAnchor = anchors.find((anchor) => hasPathExtension(anchor, ".pdf"));
+    if (!pdfAnchor) continue;
+    const xbrlAnchor = anchors.find((anchor) => hasPathExtension(anchor, ".zip"));
     const dateText = row.match(/>\s*(\d{4}\/\d{2}\/\d{2})\s*</)?.[1];
     if (!dateText) continue;
-    const title = decodeHtml(pdfMatch[2]);
+    const title = decodeHtml(pdfAnchor.body);
     if (!title || !isRelevantDisclosure(title)) continue;
 
     const disclosedAt = toJstDateTime(dateText);
     if (new Date(disclosedAt).getTime() < cutoff) continue;
 
-    const pdfUrl = new URL(pdfMatch[1], JPX_BASE_URL).toString();
-    if (seen.has(pdfUrl)) continue;
-    seen.add(pdfUrl);
+    const pdfUrl = pdfAnchor.url.toString();
+    const xbrlUrl = xbrlAnchor?.url.toString();
     const pdfName = new URL(pdfUrl).pathname.split("/").pop() || `${input.ticker}-${dateText}`;
-    records.push({
-      id: pdfName.replace(/\.pdf$/i, ""),
+    const id = pdfName.replace(/\.pdf$/i, "");
+    const record: JpxDisclosureRecord = {
+      id,
       disclosedAt,
       title,
       ticker: input.ticker,
       companyName: input.companyName,
       pdfUrl,
+      xbrlUrl,
       sourceUrl: JPX_DETAIL_URL
-    });
+    };
+    const existing = records.get(id);
+    records.set(id, existing ? mergeSameIdRecords(existing, record) : record);
   }
 
-  return records
+  return Array.from(records.values())
     .sort((a, b) => new Date(b.disclosedAt).getTime() - new Date(a.disclosedAt).getTime())
-    .slice(0, 50);
+    ;
 }
 
 /**
@@ -185,7 +237,7 @@ async function fetchText(responsePromise: Promise<Response>, cookieJar: CookieJa
 export async function lookupJpxDisclosures(
   input: { ticker: string; lookbackDays: number },
   fetchImpl: FetchLike = fetch
-): Promise<{ companyName: string; disclosures: JpxDisclosureRecord[] }> {
+): Promise<JpxLookupResult> {
   if (!/^[0-9][0-9A-Z]{3}$/.test(input.ticker)) throw new Error("invalid_ticker");
   const lookbackDays = Math.max(30, Math.min(365, Math.round(input.lookbackDays)));
   const cookieJar = new CookieJar();
@@ -216,7 +268,7 @@ export async function lookupJpxDisclosures(
   );
 
   const company = parseJpxCompanySearchResult(searchResponse.text, input.ticker);
-  if (!company) return { companyName: "", disclosures: [] };
+  if (!company) return { companyName: "", disclosures: [], state: "empty", truncated: false };
 
   const detailBody = new URLSearchParams({
     BaseJh: "BaseJh",
@@ -235,27 +287,61 @@ export async function lookupJpxDisclosures(
     "ccJjCrpSelKekkLst_st[0].dspYuKssnKi": company.fiscalMonth
   });
 
-  const detailResponse = await fetchText(
-    fetchImpl(JPX_DETAIL_URL, {
-      method: "POST",
-      headers: {
-        ...commonHeaders,
-        "Content-Type": "application/x-www-form-urlencoded",
-        Cookie: cookieJar.toHeader(),
-        Referer: searchResponse.response.url
-      },
-      body: detailBody.toString()
-    }),
-    cookieJar
-  );
-
-  if (!detailResponse.text.includes(company.managerCode)) throw new Error("jpx_detail_not_found");
-  return {
-    companyName: company.companyName,
-    disclosures: parseJpxDisclosureRows(detailResponse.text, {
+  const disclosures: JpxDisclosureRecord[] = [];
+  const seen = new Map<string, number>();
+  let truncated = false;
+  let reachedCutoff = false;
+  for (let page = 1; page <= JPX_MAX_PAGES && !reachedCutoff; page += 1) {
+    detailBody.set("lstDspPg", String(page));
+    detailBody.set("dspGs", String(JPX_PAGE_SIZE));
+    const detailResponse = await fetchText(
+      fetchImpl(JPX_DETAIL_URL, {
+        method: "POST",
+        headers: {
+          ...commonHeaders,
+          "Content-Type": "application/x-www-form-urlencoded",
+          Cookie: cookieJar.toHeader(),
+          Referer: searchResponse.response.url
+        },
+        body: detailBody.toString()
+      }),
+      cookieJar
+    );
+    if (!detailResponse.text.includes(company.managerCode)) throw new Error("jpx_detail_not_found");
+    const pageRecords = parseJpxDisclosureRows(detailResponse.text, {
       ticker: input.ticker,
       companyName: company.companyName,
       lookbackDays
-    })
+    });
+    for (const record of pageRecords) {
+      const existingIndex = seen.get(record.id);
+      if (existingIndex === undefined) {
+        seen.set(record.id, disclosures.length);
+        disclosures.push(record);
+      } else {
+        disclosures[existingIndex] = mergeSameIdRecords(disclosures[existingIndex], record);
+      }
+    }
+    const dates = Array.from(detailResponse.text.matchAll(/(\d{4}\/\d{2}\/\d{2})/g))
+      .map((match) => new Date(toJstDateTime(match[1])).getTime());
+    reachedCutoff = dates.length > 0 && Math.min(...dates) < Date.now() - lookbackDays * 24 * 60 * 60 * 1000;
+    const hasNext = new RegExp(`lstDspPg[^>]*value=["']${page + 1}["']|>${page + 1}<`).test(detailResponse.text);
+    const pageIsFull = countDisclosureRows(detailResponse.text) >= JPX_PAGE_SIZE;
+    if (reachedCutoff) break;
+    if (page === JPX_MAX_PAGES) {
+      truncated = hasNext || pageIsFull;
+      break;
+    }
+    if (!hasNext) {
+      truncated = pageIsFull;
+      break;
+    }
+  }
+  disclosures.sort((a, b) => Date.parse(b.disclosedAt) - Date.parse(a.disclosedAt) || a.id.localeCompare(b.id));
+  return {
+    companyName: company.companyName,
+    disclosures,
+    state: truncated ? "truncated" : disclosures.length ? "success" : "empty",
+    truncated
   };
 }

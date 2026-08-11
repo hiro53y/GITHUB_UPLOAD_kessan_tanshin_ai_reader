@@ -1,15 +1,13 @@
 import type { DisclosureDocumentType, DisclosureItem } from "./types";
 import { tdnetCodeToTicker } from "./utils";
 
-const positiveRules: Array<{ keyword: string; points: number; reason: string }> = [
-  { keyword: "決算短信", points: 50, reason: "タイトルに「決算短信」を含む" },
-  { keyword: "四半期決算短信", points: 45, reason: "タイトルに「四半期決算短信」を含む" },
-  { keyword: "通期決算短信", points: 45, reason: "タイトルに「通期決算短信」を含む" },
-  { keyword: "決算説明資料", points: 25, reason: "タイトルに「決算説明資料」を含む" },
-  { keyword: "決算補足説明資料", points: 25, reason: "タイトルに「決算補足説明資料」を含む" },
-  { keyword: "業績予想の修正", points: 20, reason: "タイトルに「業績予想の修正」を含む" },
-  { keyword: "配当予想の修正", points: 15, reason: "タイトルに「配当予想の修正」を含む" }
-];
+const typeScores: Record<DisclosureDocumentType, { points: number; reason: string }> = {
+  earnings_release: { points: 100, reason: "決算短信（第1優先）" },
+  earnings_presentation: { points: 60, reason: "決算説明資料（第2優先）" },
+  forecast_revision: { points: 20, reason: "業績予想資料" },
+  dividend_revision: { points: 10, reason: "配当資料" },
+  other: { points: 0, reason: "対象外資料" }
+};
 
 const negativeRules: Array<{ keyword: string; points: number; reason: string }> = [
   { keyword: "人事異動", points: -50, reason: "主対象外の「人事異動」を含む" },
@@ -23,6 +21,14 @@ const negativeRules: Array<{ keyword: string; points: number; reason: string }> 
   { keyword: "役員報酬", points: -30, reason: "主対象外寄りの「役員報酬」を含む" },
   { keyword: "譲渡制限付株式報酬", points: -30, reason: "主対象外寄りの株式報酬情報を含む" }
 ];
+
+function isCorrectionTitle(title: string): boolean {
+  return /訂正|差替/.test(title);
+}
+
+function isAutoSelectable(item: DisclosureItem): boolean {
+  return item.documentType === "earnings_release" || item.documentType === "earnings_presentation";
+}
 
 export function classifyDocumentTitle(title: string): DisclosureDocumentType {
   if (/決算短信|四半期決算短信|通期決算短信/.test(title)) return "earnings_release";
@@ -41,6 +47,7 @@ export function scoreDisclosure(
   const reasons: string[] = [];
   const itemTicker = tdnetCodeToTicker(item.ticker);
 
+  const documentType = classifyDocumentTitle(item.title);
   if (itemTicker && itemTicker === input.ticker) {
     score += 50;
     reasons.push("銘柄コードが一致した（+50）");
@@ -51,11 +58,13 @@ export function scoreDisclosure(
     reasons.push("会社名補助入力と一致した（+20）");
   }
 
-  for (const rule of positiveRules) {
-    if (item.title.includes(rule.keyword)) {
-      score += rule.points;
-      reasons.push(`${rule.reason}（+${rule.points}）`);
-    }
+  const typeScore = typeScores[documentType];
+  score += typeScore.points;
+  reasons.push(`${typeScore.reason}（+${typeScore.points}）`);
+
+  if (isCorrectionTitle(item.title)) {
+    score += 15;
+    reasons.push("訂正・差替版を原本より優先（+15）");
   }
 
   for (const rule of negativeRules) {
@@ -85,18 +94,37 @@ export function scoreDisclosure(
 
   return {
     ...item,
-    documentType: classifyDocumentTitle(item.title),
+    documentType,
     score,
     scoreReasons: reasons.length ? reasons : ["スコア対象の明確な条件は限定的です"]
   };
 }
 
-export function selectBestDisclosure(candidates: DisclosureItem[]): DisclosureItem | undefined {
-  return [...candidates].sort((a, b) => b.score - a.score)[0];
+export function selectBestDisclosure(candidates: DisclosureItem[], ticker?: string): DisclosureItem | undefined {
+  const rank: Record<DisclosureDocumentType, number> = {
+    earnings_release: 0, earnings_presentation: 1, forecast_revision: 2, dividend_revision: 3, other: 4
+  };
+  return candidates
+    .filter((item) => !ticker || tdnetCodeToTicker(item.ticker) === ticker)
+    .filter(isAutoSelectable)
+    .sort((a, b) => {
+      const type = rank[a.documentType] - rank[b.documentType];
+      if (type) return type;
+      const correction = Number(isCorrectionTitle(b.title)) - Number(isCorrectionTitle(a.title));
+      if (correction) return correction;
+      const date = (Date.parse(b.disclosedAt || "") || 0) - (Date.parse(a.disclosedAt || "") || 0);
+      if (date) return date;
+      const assets = Number(Boolean(b.pdfUrl)) + Number(Boolean(b.xbrlUrl)) - Number(Boolean(a.pdfUrl)) - Number(Boolean(a.xbrlUrl));
+      if (assets) return assets;
+      return a.id.localeCompare(b.id);
+    })[0];
 }
 
-export function isCloseDecision(candidates: DisclosureItem[]): boolean {
-  if (candidates.length < 2) return false;
-  const sorted = [...candidates].sort((a, b) => b.score - a.score);
+export function isCloseDecision(candidates: DisclosureItem[], ticker?: string): boolean {
+  const selectable = candidates
+    .filter((item) => !ticker || tdnetCodeToTicker(item.ticker) === ticker)
+    .filter(isAutoSelectable);
+  if (selectable.length < 2) return false;
+  const sorted = [...selectable].sort((a, b) => b.score - a.score);
   return sorted[0].score - sorted[1].score <= 10;
 }

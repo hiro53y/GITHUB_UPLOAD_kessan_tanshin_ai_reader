@@ -86,9 +86,9 @@ export function SettingsPanel({
           </div>
           {settings.aiSummaryEnabled ? (
             <p className="rounded-xl bg-green-50 p-3 text-sm leading-6 text-green-700">
-              AI要約が有効です。分析時にCloudflare Workers AI（@cf/meta/llama-3.1-8b-instruct）で決算分析レポートを生成します。
-              Worker URL未設定でも、Pages側のAIバインディング（変数名: AI）が設定されていれば同一オリジンで動作します。
-              AI基盤が未設定の場合は自動的にスキップし、標準ルール分析のレポートを表示します。
+              AI要約が有効です。分析時にCloudflare Workers AI（@cf/meta/llama-3.1-8b-instruct-fast）へ、
+              ページ抜粋と検証済みfactsを送って根拠付き要約を生成します。Worker URL未設定でも、Pages側のAIバインディング
+              （変数名: AI）が設定されていれば同一オリジンで動作します。応答が検証を通らない場合は採用せず、標準ルール分析を表示します。
             </p>
           ) : null}
         </div>

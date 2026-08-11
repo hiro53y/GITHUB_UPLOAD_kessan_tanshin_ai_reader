@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { normalizeSearchKey, resolveTickerByName, searchTickerMaster, type TickerMasterEntry } from "../src/lib/tickerMaster";
+import { isValidTicker } from "../src/lib/utils";
 
 function entries(rows: Array<[string, string]>): TickerMasterEntry[] {
   return rows.map(([code, name]) => ({ code, name, key: normalizeSearchKey(name) }));
@@ -56,5 +57,12 @@ describe("resolveTickerByName", () => {
   });
   it("部分一致でも先頭候補を返す", () => {
     expect(resolveTickerByName(MASTER, "富士フイルム")?.code).toBe("4901");
+  });
+});
+
+describe("isValidTicker", () => {
+  it("英字入り4桁コードも有効と判定する", () => {
+    expect(isValidTicker("130A")).toBe(true);
+    expect(isValidTicker("130a")).toBe(true);
   });
 });

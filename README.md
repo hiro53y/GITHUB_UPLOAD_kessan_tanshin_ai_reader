@@ -2,7 +2,7 @@
 
 ## GitHubアップロード対象
 
-GitHubへアップロードするフォルダは `deliverables/GITHUB_UPLOAD_kessan_tanshin_ai_reader_20260625_5451_FIX/` です。
+GitHubへ反映する正本は `deliverables/GITHUB_UPLOAD_kessan_tanshin_ai_reader/` です。このフォルダ自体がGitリポジトリになっています。
 
 このフォルダをGitHubリポジトリのルートとしてアップロードしてください。Cloudflare Pagesでは、そのリポジトリに対して `npm run build` を実行し、出力先を `dist` に設定します。
 
@@ -18,21 +18,22 @@ Cloudflare PagesではNode.js 20系でビルドする前提です。`.node-versi
 
 ## できること
 
-- **会社名または銘柄コードで検索**（例:「長谷川香料」→ 4958 をサジェスト。銘柄マスタはJPX東証上場銘柄一覧由来のオープンデータをCDN取得しlocalStorageにキャッシュ）
-- 英字入り銘柄コード（例: 130A）にも対応
+- 会社名または銘柄コードで検索（英字入り銘柄コードにも対応）
 - 銘柄コードからTDnet公開閲覧ページを検索
 - TDnetの公開期間外をJPX「東証上場会社情報サービス」の開示履歴で自動補完
 - 決算短信、四半期決算短信、決算説明資料、業績予想修正、配当予想修正などの候補選定
 - PDFの自動取得または手動PDFアップロード
-- **一度抽出したPDFテキストを保存し、再分析時はダウンロードを省略**（保存済み全文を採用）
+- 品質情報付きで保存したPDF抽出結果を再分析時に再利用
 - `pdfjs-dist` によるページ単位のテキスト抽出
-- **一言サマリー＋構造化された「決算分析レポート」**（企業概要／業績ハイライト：全体業績・利益率・通期予想進捗率・予想修正有無・配当・財務安全性）
-- 利益率・進捗率などの派生指標はアプリ側で計算（LLMの数値捏造を防止）
+- PDF文字座標からの行・セル復元と、対象ページ単位の抽出品質ゲート
+- XBRLのcontext・期間・連結区分・unitRefを検証した統一financial facts
 - 標準ルール分析による主要トピック、注意語句、数値候補、原文確認ページの提示
+- 一言サマリーと構造化された決算分析レポートの表示・コピー
 - AI用プロンプト、Markdownレポート、原文確認リストのコピー
 - ローカルストレージによる履歴保存
-- Cloudflare Workers AI（無料枠）によるAI要約（オプション、下記参照）
-- ホーム画面でLOOKUP→SELECT→DOWNLOAD→EXTRACT→LLMの5ステップ進捗をリアルタイム表示
+- Cloudflare Workers AI（無料枠）によるAI要約（オプション）
+- 実PDFゴールドfixtureと5件の合成回帰ケースによる定量精度ゲート
+- ホーム画面で取得・抽出・分析の進捗をリアルタイム表示
 - PWAとしてAndroid Chromeのホーム画面に追加
 
 ## できないこと
@@ -48,12 +49,7 @@ Cloudflare PagesではNode.js 20系でビルドする前提です。`.node-versi
 
 MVPでは有料APIを使いません。外部LLM APIも使いません。
 
-Cloudflare Workers AI（無料枠）によるAI要約はオプション機能として利用できます（既定ON）。次のどちらかの経路で動作します。
-
-1. **同一オリジン（推奨・Worker URL入力不要）**: Cloudflare ダッシュボード → Pages プロジェクト → Settings → Functions → **Workers AI バインディングを追加（変数名: `AI`）**。これだけで `/api/ai/summarize` が有効になります。
-2. **外部Worker**: 設定画面の「Cloudflare Workers proxy URL」に、`worker/` をデプロイしたURLを入力。
-
-AIバインディング未設定の場合、AI要約は自動的にスキップされ、標準ルール分析による構造化レポートが表示されます（エラーにはなりません）。AI要約には、アプリ側で計算済みの利益率・進捗率等が「参考数値」として渡され、数値の捏造を抑止します。
+Cloudflare Workers AI（無料枠）によるAI要約はオプション機能として利用できます。Cloudflare PagesのFunctionsへ `AI` バインディングを追加すれば同一オリジンの `/api/ai/summarize` を利用でき、外部Worker URLも指定できます。AI応答はページ根拠・数値・禁止表現・入力ハッシュを検証し、不合格時は標準ルール分析へ戻します。
 
 ## TDnet・JPX公開ページ取得について
 
@@ -102,6 +98,14 @@ npm run build
 ```
 
 ビルド成果物は `dist/` に生成されます。PWA manifest、service worker、PDF workerを含みます。
+
+## 精度評価
+
+```bash
+npm run accuracy
+```
+
+公式決算短信PDF 1件と合成回帰ケース5件について、資料種別、期間、連結区分、主要数値、単位、警告、根拠ページを検証します。重大項目は完全一致、根拠ページ包含率は90%以上、警告F1は基準値以上を合格条件にしています。通常の全回帰テストは `npm test` です。
 
 ## スマホでPWAとして使う方法
 
@@ -192,10 +196,11 @@ Worker proxyの方針:
 
 Cloudflare Workers AI（無料枠）を使ったAI要約機能が利用できます。
 
-- モデル: `@cf/meta/llama-3.1-8b-instruct`
-- 無料枠: 10,000 neurons/日
+- モデル: `@cf/meta/llama-3.1-8b-instruct-fast`
 - エンドポイント: `POST /ai/summarize`
 - Workerの`wrangler.toml`に`[ai] binding = "AI"`が必要
+- JSON Schema、根拠ページ、抜粋、数値、禁止表現をWorkerとブラウザの両方で検証
+- モデル・messages・schema・生成パラメータの入力ハッシュを履歴へ保存
 
 ### AI要約の有効化手順
 
@@ -204,7 +209,7 @@ Cloudflare Workers AI（無料枠）を使ったAI要約機能が利用できま
 3. 「AI要約（Workers AI）」をONにする
 4. 分析時に自動でAI要約が生成される
 
-AI要約が失敗しても、従来のルールベース分析は常に表示されます。
+AI要約が不正・不整合・失敗の場合、その応答は表示せず、統一factsから生成したルールベース分析を表示します。
 
 ## PDF自動取得に失敗した場合
 

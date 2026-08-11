@@ -87,6 +87,17 @@ export function buildMarkdownReport(report: AnalysisReport): string {
 
   const goodBlock = dig.goodPoints.map((p) => `- ${p}`).join("\n");
   const concernBlock = dig.concernPoints.map((p) => `- ${p}`).join("\n");
+  const factSourceBlock = ([
+    ["実績", report.financialFacts?.performance],
+    ["通期予想", report.financialFacts?.forecast]
+  ] as const).flatMap(([label, group]) => {
+    if (!group) return [];
+    const source = group.source === "xbrl" ? "XBRL" : group.source === "pdf" ? "PDF" : "PDF + XBRL";
+    const pages = Array.from(new Set(Object.values(group.metrics).flatMap((fact) => fact?.pageNumber ? [fact.pageNumber] : [])));
+    const context = group.contextRef ? ` / context ${group.contextRef}` : "";
+    const consolidation = group.consolidation === "consolidated" ? "連結" : group.consolidation === "non_consolidated" ? "個別" : "区分不確実";
+    return [`- ${label}: ${source}${pages.length ? ` ${pages.join("・")}P` : ""}${context} / ${consolidation} / 品質 ${group.quality}`];
+  }).join("\n");
 
   const sections: string[] = [];
 
@@ -115,6 +126,10 @@ ${structuredReportToText(report.structuredReport)}`);
     if (forecastTable) blocks.push("### 通期予想\n" + forecastTable);
     if (dig.forecastRevisionLine) blocks.push(`- ${dig.forecastRevisionLine}`);
     if (dig.dividendLine) blocks.push(`- ${dig.dividendLine}`);
+    if (factSourceBlock) blocks.push(`### 数値ソース\n${factSourceBlock}`);
+    if (report.financialFacts?.uncertainty.length) {
+      blocks.push(`### 不確実性\n${report.financialFacts.uncertainty.map((item) => `- ${item}`).join("\n")}`);
+    }
     sections.push(blocks.join("\n\n"));
   }
 

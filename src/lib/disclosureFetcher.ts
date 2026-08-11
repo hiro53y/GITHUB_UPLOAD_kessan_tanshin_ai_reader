@@ -1,4 +1,4 @@
-import type { DisclosureFetchResult, DisclosureItem } from "./types";
+import type { DisclosureFetchResult, DisclosureItem, DisclosureSourceState } from "./types";
 import { classifyDocumentTitle, isCloseDecision, scoreDisclosure, selectBestDisclosure } from "./disclosureScorer";
 import { getDisclosureCache, setDisclosureCache, getSettings } from "./storage";
 import {
@@ -42,6 +42,29 @@ function clean(value?: string | null): string {
   return stripHtmlEntities(value || "");
 }
 
+export function hasUrlPathExtension(rawUrl: string | null | undefined, extension: ".pdf" | ".zip"): boolean {
+  if (!rawUrl) return false;
+  try {
+    return new URL(rawUrl, TDNET_INBS_URL).pathname.toLowerCase().endsWith(extension);
+  } catch {
+    return false;
+  }
+}
+
+function findAssetLink(root: Element | null | undefined, extension: ".pdf" | ".zip"): HTMLAnchorElement | undefined {
+  return Array.from(root?.querySelectorAll<HTMLAnchorElement>("a[href]") ?? [])
+    .find((anchor) => hasUrlPathExtension(anchor.getAttribute("href"), extension));
+}
+
+export function tdnetDateFormHasOptions(html: string): boolean {
+  const selectBlocks = html.match(/<select\b[^>]*>[\s\S]*?<\/select>/gi) ?? [];
+  return selectBlocks.some((block) => {
+    const openTag = block.match(/^<select\b[^>]*>/i)?.[0] ?? "";
+    if (!/\bname\s*=\s*["']t0["']/i.test(openTag)) return false;
+    return /<option\b(?=[^>]*\bvalue\s*=\s*["']\d{8}["'])[^>]*>/i.test(block);
+  });
+}
+
 function parseSearchDates(html: string): SearchDate[] {
   const doc = new DOMParser().parseFromString(html, "text/html");
   const options = Array.from(doc.querySelectorAll<HTMLSelectElement>("select[name='t0'] option"));
@@ -66,9 +89,9 @@ function rowToDisclosure(row: Element, sourceUrl: string): DisclosureItem | unde
   const codeText = clean(row.querySelector(".code, .kjCode")?.textContent);
   const companyName = clean(row.querySelector(".companyname, .kjName")?.textContent);
   const titleCell = row.querySelector(".title, .kjTitle");
-  const titleLink = titleCell?.querySelector<HTMLAnchorElement>("a[href$='.pdf'], a[href$='.PDF']");
+  const titleLink = findAssetLink(titleCell, ".pdf");
   const title = clean(titleLink?.innerHTML || titleCell?.innerHTML || titleCell?.textContent);
-  const xbrlLink = row.querySelector<HTMLAnchorElement>(".xbrl a[href$='.zip'], .kjXbrl a[href$='.zip']");
+  const xbrlLink = findAssetLink(row.querySelector(".xbrl, .kjXbrl"), ".zip");
   const ticker = tdnetCodeToTicker(codeText);
   const pdfUrl = absoluteTdnetUrl(titleLink?.getAttribute("href"));
   const xbrlUrl = absoluteTdnetUrl(xbrlLink?.getAttribute("href"));
@@ -76,7 +99,7 @@ function rowToDisclosure(row: Element, sourceUrl: string): DisclosureItem | unde
   if (!title || !ticker) return undefined;
 
   const disclosedAt = toIsoDateTime(timeText) ?? undefined;
-  const pdfId = pdfUrl?.split("/").pop()?.replace(/\.[^.]+$/, "");
+  const pdfId = pdfUrl ? new URL(pdfUrl).pathname.split("/").pop()?.replace(/\.pdf$/i, "") : undefined;
   return {
     id: pdfId || `${ticker}-${timeText}-${title}`.replace(/\s+/g, "-"),
     disclosedAt,
@@ -109,9 +132,11 @@ function buildResult(
   searchedAt: string,
   note?: string
 ): DisclosureFetchResult {
-  const selectable = candidates.filter((item) => item.documentType !== "other");
-  const selected = selectBestDisclosure(selectable);
-  const close = isCloseDecision(selectable);
+  const selectable = candidates.filter((item) =>
+    item.documentType === "earnings_release" || item.documentType === "earnings_presentation"
+  );
+  const selected = selectBestDisclosure(selectable, input.ticker);
+  const close = isCloseDecision(selectable, input.ticker);
   const userMessage = selected
     ? close
       ? "上位候補の点差が小さいため、候補一覧を確認してください。最上位候補を仮選定しています。"
@@ -132,7 +157,10 @@ function buildResult(
 
 async function getAvailableDates(signal?: AbortSignal): Promise<SearchDate[]> {
   const { text } = await fetchTextWithFallback(TDNET_SEARCH_HEAD_URL, undefined, signal);
-  return parseSearchDates(text);
+  if (!tdnetDateFormHasOptions(text)) throw new Error("tdnet_date_form_invalid");
+  const dates = parseSearchDates(text);
+  if (!dates.length) throw new Error("tdnet_date_options_invalid");
+  return dates;
 }
 
 type ArchiveDisclosureResponse = {
@@ -145,8 +173,11 @@ type ArchiveDisclosureResponse = {
     ticker: string;
     companyName: string;
     pdfUrl: string;
+    xbrlUrl?: string;
     sourceUrl: string;
   }>;
+  state?: DisclosureSourceState;
+  truncated?: boolean;
   error?: string;
   message?: string;
 };
@@ -156,7 +187,7 @@ async function searchJpxArchive(
   lookbackDays: number,
   proxyUrl: string,
   signal?: AbortSignal
-): Promise<{ companyName?: string; candidates: DisclosureItem[] }> {
+): Promise<{ companyName?: string; candidates: DisclosureItem[]; state: DisclosureSourceState }> {
   const params = new URLSearchParams({ ticker, lookbackDays: String(lookbackDays) });
   const configuredWorker = proxyUrl ? `${proxyUrl.replace(/\/$/, "")}/disclosures?${params}` : undefined;
   const attempts = Array.from(new Set([configuredWorker, `/api/disclosures?${params}`].filter(Boolean))) as string[];
@@ -171,6 +202,7 @@ async function searchJpxArchive(
       if (!body.ok || !Array.isArray(body.disclosures)) throw new Error(body.message || body.error || "invalid_response");
       return {
         companyName: body.companyName,
+        state: body.state || (body.disclosures.length ? "success" : "empty"),
         candidates: body.disclosures.map((item) => ({
           ...item,
           documentType: classifyDocumentTitle(item.title),
@@ -187,11 +219,44 @@ async function searchJpxArchive(
   throw new Error(errors.join(" / "));
 }
 
-function mergeDisclosures(...groups: DisclosureItem[][]): DisclosureItem[] {
+export function disclosureDeduplicationKey(item: DisclosureItem): string {
+  const ticker = tdnetCodeToTicker(item.ticker) || "";
+  let rawId = item.id.trim();
+  try {
+    if (/^[a-z][a-z\d+.-]*:\/\//i.test(rawId)) rawId = new URL(rawId).pathname;
+  } catch {
+    // URLとして不正なIDは、その文字列自体を保持して比較する。
+  }
+  const stableId = (rawId.split(/[?#]/, 1)[0].split(/[\\/]/).pop() || "")
+    .replace(/\.(?:pdf|zip)$/i, "")
+    .trim()
+    .toLowerCase();
+  if (stableId) return `${ticker}|id:${stableId}`;
+  const title = item.title.replace(/[\s　]/g, "").toLowerCase();
+  return `${ticker}|title:${title}|${item.disclosedAt?.slice(0, 10) || ""}`;
+}
+
+export function mergeDisclosures(...groups: DisclosureItem[][]): DisclosureItem[] {
   const merged = new Map<string, DisclosureItem>();
   for (const item of groups.flat()) {
-    const key = item.pdfUrl || item.id;
-    if (!merged.has(key)) merged.set(key, item);
+    const key = disclosureDeduplicationKey(item);
+    const existing = merged.get(key);
+    if (!existing) {
+      merged.set(key, item);
+    } else {
+      const itemIsCorrection = /訂正|差替/.test(item.title);
+      const existingIsCorrection = /訂正|差替/.test(existing.title);
+      const preferred = itemIsCorrection && !existingIsCorrection ? item : existing;
+      const supplement = preferred === existing ? item : existing;
+      merged.set(key, {
+        ...supplement,
+        ...preferred,
+        pdfUrl: preferred.pdfUrl || supplement.pdfUrl,
+        xbrlUrl: preferred.xbrlUrl || supplement.xbrlUrl,
+        htmlUrl: preferred.htmlUrl || supplement.htmlUrl,
+        id: preferred.id.replace(/\.(?:pdf|zip)$/i, "")
+      });
+    }
   }
   return Array.from(merged.values());
 }
@@ -297,6 +362,8 @@ export async function fetchLatestDisclosureByTicker(input: {
     let dates: SearchDate[] = [];
     let rawCandidates: DisclosureItem[] = [];
     let tdnetError = "";
+    let tdnetState: DisclosureSourceState = "empty";
+    let jpxState: DisclosureSourceState | undefined;
     const notes: string[] = [];
 
     try {
@@ -309,20 +376,23 @@ export async function fetchLatestDisclosureByTicker(input: {
         if (!rawCandidates.length && input.companyName) {
           rawCandidates = await searchByKeyword(input.companyName, oldest, newest, ticker, input.companyName, input.signal);
         }
+        tdnetState = rawCandidates.length ? "success" : "empty";
       }
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") throw error;
       tdnetError = error instanceof Error ? error.message : String(error);
+      tdnetState = "failed";
     }
 
     const hasEarningsCandidate = rawCandidates.some((item) =>
-      item.documentType === "earnings_release" || item.documentType === "earnings_presentation"
+      item.documentType === "earnings_release"
     );
     let archiveError = "";
     if (!hasEarningsCandidate) {
       try {
         const archiveLookbackDays = effectiveEarningsLookbackDays(input.lookbackDays);
         const archive = await searchJpxArchive(ticker, archiveLookbackDays, settings.proxyUrl, input.signal);
+        jpxState = archive.state;
         if (archive.candidates.length) {
           rawCandidates = mergeDisclosures(rawCandidates, archive.candidates);
           if (!input.companyName && archive.companyName) input.companyName = archive.companyName;
@@ -334,6 +404,7 @@ export async function fetchLatestDisclosureByTicker(input: {
       } catch (error) {
         if (error instanceof DOMException && error.name === "AbortError") throw error;
         archiveError = error instanceof Error ? error.message : String(error);
+        jpxState = "failed";
       }
     }
 
@@ -341,6 +412,8 @@ export async function fetchLatestDisclosureByTicker(input: {
       try {
         const fallback = await fallbackListSearch(dates, ticker, 40, input.signal);
         rawCandidates = fallback.candidates;
+        if (fallback.truncated) tdnetState = "truncated";
+        else if (fallback.candidates.length) tdnetState = "success";
         if (fallback.truncated) notes.push("過剰アクセスを避けるため、一覧ページ探索は途中で停止しました。");
       } catch (error) {
         if (error instanceof DOMException && error.name === "AbortError") throw error;
@@ -349,7 +422,17 @@ export async function fetchLatestDisclosureByTicker(input: {
     }
 
     if (!rawCandidates.length && tdnetError && archiveError) {
-      throw new Error(`TDnet: ${tdnetError} / JPX: ${archiveError}`);
+      return {
+        status: "error",
+        ticker,
+        companyName: input.companyName,
+        searchedAt,
+        source: "tdnet-public",
+        candidates: [],
+        sourceStates: { tdnet: tdnetState, jpx: jpxState },
+        errorMessage: `TDnet: ${tdnetError} / JPX: ${archiveError}`,
+        userMessage: SEARCH_ERROR_MESSAGE
+      };
     }
 
     const dateMsValues = rawCandidates
@@ -359,10 +442,12 @@ export async function fetchLatestDisclosureByTicker(input: {
     const oldestDateMs = dateMsValues.length ? Math.min(...dateMsValues) : newestDateMs - input.lookbackDays * 24 * 60 * 60 * 1000;
 
     const candidates = rawCandidates
+      .filter((item) => tdnetCodeToTicker(item.ticker) === ticker)
       .map((item) => scoreDisclosure(item, { ticker, companyName: input.companyName, newestDateMs, oldestDateMs }))
       .sort((a, b) => b.score - a.score);
 
     const result = buildResult({ ticker, companyName: input.companyName }, candidates, searchedAt, notes.join(" "));
+    result.sourceStates = jpxState ? { tdnet: tdnetState, jpx: jpxState } : { tdnet: tdnetState };
     if (result.status === "success") setDisclosureCache(cacheKey, result);
     return result;
   } catch (error) {

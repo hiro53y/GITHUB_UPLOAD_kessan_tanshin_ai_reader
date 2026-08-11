@@ -2,6 +2,7 @@ import ts from "typescript";
 import { startVitest } from "vitest/node";
 
 const watch = process.argv.includes("--watch");
+const accuracyOnly = process.argv.includes("--accuracy");
 
 const typescriptNoSpawn = {
   name: "typescript-no-spawn",
@@ -31,7 +32,9 @@ const context = await startVitest(
     watch,
     passWithNoTests: false,
     environment: "node",
-    include: ["tests/**/*.test.ts"],
+    include: accuracyOnly
+      ? ["tests/accuracyEvaluator.test.ts", "tests/realPdfAccuracy.test.ts"]
+      : ["tests/**/*.test.ts"],
     pool: "threads",
     poolOptions: { threads: { singleThread: true } }
   },

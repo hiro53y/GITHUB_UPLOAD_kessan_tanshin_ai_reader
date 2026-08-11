@@ -13,6 +13,7 @@
     "build:vite": "vite build",
     "deploy:worker": "npx wrangler deploy --config worker/wrangler.toml",
     "test": "node scripts/test.mjs",
+    "accuracy": "node scripts/test.mjs --accuracy",
     "test:watch": "node scripts/test.mjs --watch"
   },
   "dependencies": {

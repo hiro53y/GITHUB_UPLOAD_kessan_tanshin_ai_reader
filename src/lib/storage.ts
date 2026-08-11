@@ -5,7 +5,9 @@ export const SETTINGS_KEY = "kessan-reader-settings:v1";
 const HISTORY_KEY = "kessan-reader-history:v1";
 const DISCLOSURE_CACHE_PREFIX = "kessan-reader-disclosure-cache:v1:";
 const LAST_TICKER_KEY = "kessan-reader-last-ticker:v1";
-const PDF_TEXT_CACHE_PREFIX = "kessan-reader-pdftext:v1:";
+// v1 は座標復元前の平坦な本文だけを保存しており、精度ゲートを迂回してしまう。
+// lines / quality を含む結果だけを再利用するため、互換性を切って v2 にする。
+const PDF_TEXT_CACHE_PREFIX = "kessan-reader-pdftext:v2:";
 const PDF_TEXT_CACHE_LIMIT = 12;
 const PDF_TEXT_TTL_MS = 60 * 24 * 60 * 60 * 1000; // 60日
 
@@ -181,6 +183,17 @@ type PdfTextCacheEnvelope = {
   payload: string; // deflate+base64 された PdfExtractResult JSON
 };
 
+function isReusablePdfExtractResult(value: PdfExtractResult): boolean {
+  return Boolean(
+    value
+    && value.quality
+    && typeof value.quality.safeForAutomaticFacts === "boolean"
+    && Array.isArray(value.pages)
+    && value.pages.length === value.totalPages
+    && value.pages.every((page) => Array.isArray(page.lines) && Boolean(page.quality))
+  );
+}
+
 export function getPdfTextCache(pdfUrl: string): PdfExtractResult | undefined {
   try {
     const raw = localStorage.getItem(pdfCacheKey(pdfUrl));
@@ -188,7 +201,8 @@ export function getPdfTextCache(pdfUrl: string): PdfExtractResult | undefined {
     const envelope = JSON.parse(raw) as PdfTextCacheEnvelope;
     if (envelope.pdfUrl !== pdfUrl) return undefined; // ハッシュ衝突時は不使用
     if (Date.now() - envelope.storedAt > PDF_TEXT_TTL_MS) return undefined;
-    return JSON.parse(decompressFromBase64(envelope.payload)) as PdfExtractResult;
+    const result = JSON.parse(decompressFromBase64(envelope.payload)) as PdfExtractResult;
+    return isReusablePdfExtractResult(result) ? result : undefined;
   } catch {
     return undefined;
   }
@@ -210,6 +224,7 @@ function listPdfCacheKeys(): Array<{ key: string; storedAt: number }> {
 }
 
 export function setPdfTextCache(pdfUrl: string, result: PdfExtractResult): void {
+  if (!isReusablePdfExtractResult(result)) return;
   try {
     const envelope: PdfTextCacheEnvelope = {
       storedAt: Date.now(),

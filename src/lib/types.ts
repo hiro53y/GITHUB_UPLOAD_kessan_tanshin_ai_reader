@@ -7,6 +7,8 @@ export type DisclosureDocumentType =
   | "dividend_revision"
   | "other";
 
+export type DisclosureSourceState = "success" | "empty" | "failed" | "truncated";
+
 export type DisclosureItem = {
   id: string;
   disclosedAt?: string;
@@ -31,6 +33,8 @@ export type DisclosureFetchResult = {
   selectedDisclosure?: DisclosureItem;
   candidates: DisclosureItem[];
   errorMessage?: string;
+  /** ソースごとの取得結果。旧キャッシュとの互換のため省略可能。 */
+  sourceStates?: Partial<Record<"tdnet" | "jpx", DisclosureSourceState>>;
   userMessage: string;
 };
 
@@ -38,10 +42,41 @@ export type PdfExtractResult = {
   pages: Array<{
     pageNumber: number;
     text: string;
+    /** PDF.js の座標から復元した、読み順を保つページ行。text は従来互換の平坦な本文。 */
+    lines?: PdfExtractLine[];
+    quality?: PdfPageQuality;
   }>;
   totalPages: number;
   rawText: string;
   warnings: string[];
+  quality?: PdfExtractQuality;
+};
+
+export type PdfExtractItem = { text: string; x: number; y: number; width?: number; height?: number };
+
+export type PdfExtractLine = {
+  y: number;
+  text: string;
+  items: PdfExtractItem[];
+  /** X 座標の大きな空白から復元したセル。表でない行では通常1セル。 */
+  cells: string[];
+};
+
+export type PdfPageQuality = {
+  score: number;
+  flags: Array<"empty" | "short_text" | "table_ambiguous" | "table_header_missing">;
+  tableLike: boolean;
+  /** 主要指標ヘッダと期間付き数値行の両方を座標復元できたページ。 */
+  financialTableCandidate: boolean;
+  lineCount: number;
+};
+
+export type PdfExtractQuality = {
+  score: number;
+  flags: Array<"empty_page_rate_high" | "table_ambiguous" | "text_sparse">;
+  emptyPageRate: number;
+  ambiguousTablePages: number[];
+  safeForAutomaticFacts: boolean;
 };
 
 export type TopicCategory =
@@ -91,6 +126,53 @@ export type KeyMetricRow = {
   value: string;
   growth?: string;
   growthTone?: "up" | "down" | "flat" | "unknown";
+};
+
+export type FinancialMetricKey = "sales" | "operatingProfit" | "ordinaryProfit" | "netProfit";
+export type FinancialFactSource = "pdf" | "xbrl";
+export type FinancialFactQuality = "high" | "medium" | "low";
+
+export type FinancialMetricFact = {
+  key: FinancialMetricKey;
+  valueYen: number;
+  growthRate?: number;
+  source: FinancialFactSource;
+  quality: FinancialFactQuality;
+  period?: string;
+  pageNumber?: number;
+  contextRef?: string;
+  consolidation: "consolidated" | "non_consolidated" | "unknown";
+  uncertainty: string[];
+};
+
+export type FinancialFactGroup = {
+  period?: string;
+  periodStart?: string;
+  periodEnd?: string;
+  consolidation: "consolidated" | "non_consolidated" | "unknown";
+  source: FinancialFactSource | "mixed";
+  quality: FinancialFactQuality;
+  contextRef?: string;
+  metrics: Partial<Record<FinancialMetricKey, FinancialMetricFact>>;
+  uncertainty: string[];
+};
+
+export type FinancialFacts = {
+  performance?: FinancialFactGroup;
+  forecast?: FinancialFactGroup;
+  dividendAnnualYen?: number;
+  dividendYearEndYen?: number;
+  forecastRevision?: "有" | "無";
+  dividendRevision?: "有" | "無";
+  quality: FinancialFactQuality;
+  uncertainty: string[];
+};
+
+export type AiSummaryAudit = {
+  inputHash?: string;
+  model?: string;
+  valid: boolean;
+  errors: string[];
 };
 
 export type FreeAiDigest = {
@@ -148,11 +230,14 @@ export type AnalysisReport = {
   warnings: WarningItem[];
   sourceCheckpoints: SourceCheckpoint[];
   extractedNumbers: ExtractedNumber[];
+  /** PDFとXBRLを同じ単位・期間・出所で扱う、レポート生成の唯一の数値ソース。 */
+  financialFacts?: FinancialFacts;
   freeAiDigest: FreeAiDigest;
   /** 構造化レポート（ルールベース。AI要約成功時はAI版が優先表示される） */
   structuredReport?: StructuredReport;
   aiPrompt: string;
   aiSummary?: string;
+  aiSummaryAudit?: AiSummaryAudit;
   disclaimer: string;
 };
 

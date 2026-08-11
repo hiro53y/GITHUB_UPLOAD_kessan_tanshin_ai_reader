@@ -144,6 +144,18 @@ export function ReportPage({
   const company = report.companyName || fetchResult?.companyName || "手動PDF資料";
   const ticker = report.ticker || fetchResult?.ticker;
   const title = report.sourceDisclosure?.title || "手動PDF資料";
+  const factSourceLines = ([
+    ["実績", report.financialFacts?.performance],
+    ["通期予想", report.financialFacts?.forecast]
+  ] as const).flatMap(([label, group]) => {
+    if (!group) return [];
+    const metrics = Object.values(group.metrics).filter(Boolean);
+    const page = metrics.find((fact) => fact?.pageNumber)?.pageNumber;
+    const context = group.contextRef ? ` / context ${group.contextRef}` : "";
+    const source = group.source === "xbrl" ? "XBRL" : group.source === "pdf" ? "PDF" : "PDF + XBRL";
+    const consolidation = group.consolidation === "consolidated" ? "連結" : group.consolidation === "non_consolidated" ? "個別" : "区分不確実";
+    return [`${label}: ${source}${page ? ` ${page}P` : ""}${context} / ${consolidation} / 品質${group.quality === "high" ? "高" : group.quality === "medium" ? "中" : "低"}`];
+  });
 
   return (
     <div className="space-y-4">
@@ -213,6 +225,17 @@ export function ReportPage({
             {dig.keyMetrics.length > 0 && <MetricsTable rows={dig.keyMetrics} caption="実績（前年同期比）" />}
             {dig.forecastMetrics.length > 0 && <MetricsTable rows={dig.forecastMetrics} caption="通期予想（前期比）" />}
           </div>
+          {factSourceLines.length > 0 && (
+            <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs leading-5 text-slate-600">
+              <div className="font-bold text-slate-700">数値ソース</div>
+              {factSourceLines.map((line) => <div key={line}>{line}</div>)}
+            </div>
+          )}
+          {report.financialFacts?.uncertainty.length ? (
+            <div className="mt-2 rounded-lg border border-orange-200 bg-orange-50 px-3 py-2 text-xs leading-5 text-orange-800">
+              不確実: {report.financialFacts.uncertainty.join(" / ")}
+            </div>
+          ) : null}
           {(dig.dividendLine || dig.forecastRevisionLine) && (
             <div className="mt-3 space-y-1 text-sm text-slate-700">
               {dig.forecastRevisionLine && <div>・{dig.forecastRevisionLine}</div>}
@@ -279,10 +302,17 @@ export function ReportPage({
         </Card>
       )}
 
-      {/* ── ⑦ Workers AI 要約の原文（構造化パースに失敗した場合のみ表示） ── */}
-      {report.aiSummary && structured.generatedBy !== "ai" ? (
+      {/* ── ⑦ 検証済みWorkers AI要約（標準の構造化レポートとは分離表示） ── */}
+      {report.aiSummary && (report.aiSummaryAudit || structured.generatedBy !== "ai") ? (
         <Card title="AI要約（Workers AI）">
           <div className="whitespace-pre-wrap rounded-xl border border-purple-200 bg-purple-50 p-3 text-sm leading-6 text-slate-800">{report.aiSummary}</div>
+          {report.aiSummaryAudit ? (
+            <div className="mt-2 text-xs text-slate-500">
+              検証: {report.aiSummaryAudit.valid ? "合格" : "不合格"}
+              {report.aiSummaryAudit.model ? ` / ${report.aiSummaryAudit.model}` : ""}
+              {report.aiSummaryAudit.inputHash ? ` / 入力 ${report.aiSummaryAudit.inputHash.slice(0, 12)}…` : ""}
+            </div>
+          ) : null}
           <div className="mt-3">
             <OutlineButton onClick={() => onCopy("AI要約", report.aiSummary || "")}>
               <ClipboardCopy className="h-5 w-5" />

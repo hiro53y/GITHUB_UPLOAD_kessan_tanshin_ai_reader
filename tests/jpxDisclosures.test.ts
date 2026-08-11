@@ -21,7 +21,8 @@ const detailHtml = `
   <table>
     <tr>
       <td align="center">2026/05/08</td>
-      <td><a href="/disc/72030/140120260508500001.pdf">2026年3月期 決算短信〔IFRS〕（連結）</a></td>
+      <td><a href="/disc/72030/140120260508500001.pdf?download=1">2026年3月期 決算短信〔IFRS〕（連結）</a></td>
+      <td><a href="/disc/72030/140120260508500001.zip?download=1">XBRL</a></td>
     </tr>
     <tr>
       <td align="center">2026/05/08</td>
@@ -72,7 +73,8 @@ describe("JPX上場会社情報の解析", () => {
       "2026年3月期 決算短信〔IFRS〕（連結）",
       "2026年3月期 決算説明資料"
     ]);
-    expect(records[0].pdfUrl).toBe("https://www2.jpx.co.jp/disc/72030/140120260508500001.pdf");
+    expect(records[0].pdfUrl).toBe("https://www2.jpx.co.jp/disc/72030/140120260508500001.pdf?download=1");
+    expect(records[0].xbrlUrl).toBe("https://www2.jpx.co.jp/disc/72030/140120260508500001.zip?download=1");
   });
 
   it("2つのセッションCookieを引き継いで詳細ページを取得する", async () => {
@@ -119,5 +121,68 @@ describe("JPX上場会社情報の解析", () => {
     expect(effectiveEarningsLookbackDays(configuredLookbackDays)).toBe(120);
     expect(records).toHaveLength(1);
     expect(records[0].title).toBe("2026年３月期 決算短信〔日本基準〕（連結）");
+  });
+
+  it("JPX詳細履歴を明示された次ページまで探索する", async () => {
+    const pagedFirst = `
+      <div>72030 テスト自動車</div><table><tr><td>2026/05/08</td>
+      <td><a href="/disc/72030/first.pdf">2026年3月期 決算説明資料</a></td></tr></table>
+      <input name="lstDspPg" value="2">`;
+    const pagedSecond = `
+      <div>72030 テスト自動車</div><table><tr><td>2026/05/07</td>
+      <td><a href="/disc/72030/second.pdf">2026年3月期 決算短信〔IFRS〕（連結）</a></td></tr></table>`;
+    let calls = 0;
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      calls += 1;
+      if (calls === 1) return new Response('<form action="/tseHpFront/JJK010010Action.do"></form>');
+      if (calls === 2) return new Response(searchResultHtml);
+      return new Response(String(init?.body).includes("lstDspPg=1") ? pagedFirst : pagedSecond);
+    });
+    const result = await lookupJpxDisclosures({ ticker: "7203", lookbackDays: 120 }, fetchMock);
+    expect(calls).toBe(4);
+    expect(result.disclosures.map((item) => item.id)).toContain("second");
+    expect(result.state).toBe("success");
+    expect(result.truncated).toBe(false);
+  });
+
+  it("50件満杯なのに次ページを確定できない場合はtruncatedを返す", async () => {
+    const today = new Date().toISOString().slice(0, 10).replace(/-/g, "/");
+    const rows = Array.from({ length: 50 }, (_, index) => `
+      <tr><td>${today}</td><td><a href="/disc/72030/full-${index}.pdf">決算説明資料 ${index}</a></td></tr>
+    `).join("");
+    let calls = 0;
+    const fetchMock = vi.fn(async () => {
+      calls += 1;
+      if (calls === 1) return new Response('<form action="/tseHpFront/JJK010010Action.do"></form>');
+      if (calls === 2) return new Response(searchResultHtml);
+      return new Response(`<div>72030 テスト自動車</div><table>${rows}</table>`);
+    });
+
+    const result = await lookupJpxDisclosures({ ticker: "7203", lookbackDays: 120 }, fetchMock);
+    expect(calls).toBe(3);
+    expect(result.disclosures).toHaveLength(50);
+    expect(result.state).toBe("truncated");
+    expect(result.truncated).toBe(true);
+  });
+
+  it("JPX詳細履歴は最大6ページで停止する", async () => {
+    const today = new Date().toISOString().slice(0, 10).replace(/-/g, "/");
+    let calls = 0;
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      calls += 1;
+      if (calls === 1) return new Response('<form action="/tseHpFront/JJK010010Action.do"></form>');
+      if (calls === 2) return new Response(searchResultHtml);
+      const page = Number(new URLSearchParams(String(init?.body)).get("lstDspPg") || "1");
+      const rows = Array.from({ length: 50 }, (_, index) => `
+        <tr><td>${today}</td><td><a href="/disc/72030/page-${page}-${index}.pdf">決算説明資料 ${page}-${index}</a></td></tr>
+      `).join("");
+      return new Response(`<div>72030 テスト自動車</div><table>${rows}</table><input name="lstDspPg" value="${page + 1}">`);
+    });
+
+    const result = await lookupJpxDisclosures({ ticker: "7203", lookbackDays: 120 }, fetchMock);
+    expect(calls).toBe(8);
+    expect(result.disclosures).toHaveLength(300);
+    expect(result.state).toBe("truncated");
+    expect(result.truncated).toBe(true);
   });
 });

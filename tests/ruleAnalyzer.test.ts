@@ -121,6 +121,87 @@ describe("ruleAnalyzer - 警告検出", () => {
     const labels = report.warnings.map((w) => w.label);
     expect(labels).not.toContain("下方修正");
   });
+
+  it("目次と『該当事項はありません』だけでは重要注記の警告を出さない", () => {
+    const report = analyzeDisclosureText({ pages: [
+      { pageNumber: 1, text: "目次\n（継続企業の前提に関する注記）…………………… 7" },
+      { pageNumber: 7, text: "（継続企業の前提に関する注記）\n該当事項はありません。\n（重要な後発事象）\n該当事項なし。" }
+    ] });
+    const labels = report.warnings.map((warning) => warning.label);
+    expect(labels).not.toContain("継続企業の前提");
+    expect(labels).not.toContain("重要な後発事象");
+  });
+
+  it("『不確実性が後退』をリスク警告として扱わない", () => {
+    const report = analyzeDisclosureText({ pages: [
+      { pageNumber: 1, text: "政策の不確実性が後退していることから、回復が期待されます。" }
+    ] });
+    expect(report.warnings.map((warning) => warning.label)).not.toContain("不確実性");
+  });
+
+  it("別の注記が『該当なし』でも、実額のある減損損失は警告に残す", () => {
+    const report = analyzeDisclosureText({ pages: [
+      { pageNumber: 1, text: "減損損失 56百万円\n（重要な後発事象）\n該当事項はありません。" }
+    ] });
+    expect(report.warnings.map((warning) => warning.label)).toContain("減損・訴訟");
+  });
+
+  it("後続の別注記が『該当なし』でも、継続企業の重要な疑義は警告に残す", () => {
+    const report = analyzeDisclosureText({ pages: [{ pageNumber: 1, text: `
+（継続企業の前提に関する注記）
+継続企業の前提に重要な疑義を生じさせる事象があります。
+（重要な後発事象）
+該当事項はありません。
+` }] });
+    expect(report.warnings.map((warning) => warning.label)).toContain("継続企業の前提");
+  });
+
+  it("点線がない目次見出しや、損失を計上していない否定文を警告にしない", () => {
+    const report = analyzeDisclosureText({ pages: [
+      { pageNumber: 1, text: "目次\n（継続企業の前提に関する注記） 9" },
+      { pageNumber: 2, text: "当期は営業損失を計上しておりません。" }
+    ] });
+    const labels = report.warnings.map((warning) => warning.label);
+    expect(labels).not.toContain("継続企業の前提");
+    expect(labels).not.toContain("赤字・損失");
+  });
+
+  it("後段の円単位表ではなく、主要業績表直前の百万円単位を採用する", () => {
+    const report = analyzeDisclosureText({ pages: [{ pageNumber: 1, text: `
+（単位：百万円）
+2026年3月期 55000 10.5 8500 25.0 8700 24.0 6300 28.0
+（単位：円）
+1株当たり当期純利益 120.00
+` }] });
+    expect(report.financialFacts?.performance?.metrics.sales?.valueYen).toBe(55_000_000_000);
+  });
+
+  it("成長率が欠損したラベル式で、次の指標値を成長率に流用しない", () => {
+    const report = analyzeDisclosureText({ pages: [{ pageNumber: 1, text: `
+2026年3月期 決算短信〔日本基準〕（連結）
+（単位：百万円）
+2026年3月期 売上高 100 営業利益 20 経常利益 21 当期純利益 10
+` }] });
+    expect(report.financialFacts?.performance?.metrics.sales?.growthRate).toBeUndefined();
+    expect(report.freeAiDigest.verdict).toBe("unknown");
+  });
+
+  it("連結短信の後段に個別決算の参考情報があっても連結として扱う", () => {
+    const report = analyzeDisclosureText({ pages: [{ pageNumber: 1, text: `${fixtureFullYear}\n参考：個別決算の概要` }] });
+    expect(report.financialFacts?.performance?.consolidation).toBe("consolidated");
+  });
+
+  it("億円単位を円へ正規化し、単位のない主要表は確定しない", () => {
+    const withUnit = analyzeDisclosureText({ pages: [{ pageNumber: 1, text: `
+2026年3月期 決算短信〔日本基準〕（連結）
+（単位：億円）
+2026年3月期 550 10.0 85 20.0 87 18.0 63 22.0
+` }] });
+    expect(withUnit.financialFacts?.performance?.metrics.sales?.valueYen).toBe(55_000_000_000);
+    const withoutUnit = analyzeDisclosureText({ pages: [{ pageNumber: 1, text: "2026年3月期 550 10.0 85 20.0 87 18.0 63 22.0" }] });
+    expect(withoutUnit.financialFacts?.performance).toBeUndefined();
+    expect(withoutUnit.financialFacts?.uncertainty.join(" ")).toContain("単位");
+  });
 });
 
 describe("disclosureScorer.classifyDocumentTitle", () => {

@@ -41,6 +41,21 @@
 - [x] 5451からヨドコウの2026年3月期決算短信（2026/05/11）を取得できる
 - [x] 取得した5451のPDFがHTTP 200・`application/pdf`・`%PDF-1.4`であることを確認
 - [x] `deliverables/GITHUB_UPLOAD_kessan_tanshin_ai_reader_20260625_5451_FIX` に64ファイルがあり、禁止フォルダ・ルートとの差分がない
+- [x] デバッグ精査の修正後、清浄コピーで `tsc --noEmit`（app/worker/Pages Functionsの3構成）が全てエラー0（2026-06-29）
+- [x] `vitest run` が成功（3ファイル・19件、新規 xbrlExtract.test.ts を含む、2026-06-29）
+- [x] `scripts/build.mjs`（`npm run build` のバンドル工程）が成功し `dist` 生成（2026-06-29）
+- [x] XBRL金額1e6過大の回帰テストが、修正前は失敗（'12345000000'）・修正後は成功（'12345'）することを確認（2026-06-29）
+- [x] charset判定デコード追加後も既存JPXテスト（charsetヘッダ無し→UTF-8フォールバック）が通ることを確認（2026-06-29）
+- [x] `npm run accuracy` が成功（公式PDF 1件 + 合成回帰5件、評価テスト5件、2026-08-11）
+- [x] 公式PDFから実績4指標・通期予想4指標・年間配当・警告・根拠ページがゴールド期待値に一致（2026-08-11）
+- [x] 精度版単体で `npm test` が成功（10ファイル・75件、2026-08-11）
+- [x] `npm run typecheck` が成功（app / Worker / Pages Functions、2026-08-11）
+- [x] `npm run build` が成功し `dist` を生成（2026-08-11）
+- [x] `npm run dev -- --smoke` が成功しHTTP起動確認が完了（2026-08-11）
+- [x] PDF対象ページ品質、億円/単位不明、XBRL累計context/Summary優先、期間・連結不一致抑止の回帰テストが成功（2026-08-11）
+- [x] AI構造化出力のschema・根拠・数値トークン・ページ・入力hashのWorker/クライアント二重検証テストが成功（2026-08-11）
+- [x] 精度向上版をGit管理済みの正本 `GITHUB_UPLOAD_kessan_tanshin_ai_reader` へ統合（2026-08-11）
+- [x] 正本で `npm run accuracy` 5件・全89テスト・3構成typecheck・build・起動smokeを再確認（2026-08-11）
 
 ## 未実施
 
@@ -50,6 +65,7 @@
 - [ ] Cloudflare Pages本番デプロイ確認
 - [ ] Cloudflare Workers proxy本番デプロイ確認
 - [ ] OneDrive外の完全クリーン環境での `npm ci && npm run build`
+- [ ] Cloudflare Workers AIの実デプロイ環境でライブ推論を確認
 
 ## 補足
 

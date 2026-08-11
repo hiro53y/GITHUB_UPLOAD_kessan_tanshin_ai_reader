@@ -1,0 +1,94 @@
+[
+  {
+    "id": "5451-2026-q3-real",
+    "source": "real_local_pdf",
+    "expected": {
+      "documentId": "140120260206549899",
+      "documentType": "earnings_release",
+      "period": "2026年3月期第3四半期",
+      "consolidated": true,
+      "metrics": {
+        "performance.sales": { "value": 148966000000, "unit": "JPY" },
+        "performance.operatingProfit": { "value": 9503000000, "unit": "JPY" },
+        "performance.ordinaryProfit": { "value": 13485000000, "unit": "JPY" },
+        "performance.netProfit": { "value": 9438000000, "unit": "JPY" },
+        "forecast.sales": { "value": 199000000000, "unit": "JPY" },
+        "forecast.operatingProfit": { "value": 11600000000, "unit": "JPY" },
+        "forecast.ordinaryProfit": { "value": 17000000000, "unit": "JPY" },
+        "forecast.netProfit": { "value": 11500000000, "unit": "JPY" },
+        "dividend.annual": { "value": 60, "unit": "JPY_PER_SHARE" }
+      },
+      "warnings": ["減収", "減益", "減損・訴訟"],
+      "referencePages": [1, 2]
+    }
+  },
+  {
+    "id": "jgaap-full-year-positive",
+    "source": "synthetic_regression",
+    "expected": {
+      "documentType": "earnings_release",
+      "period": "2026年3月期",
+      "consolidated": true,
+      "metrics": {
+        "performance.sales": { "value": 55000000000, "unit": "JPY" },
+        "performance.operatingProfit": { "value": 8500000000, "unit": "JPY" }
+      },
+      "warnings": [],
+      "referencePages": [1]
+    }
+  },
+  {
+    "id": "jgaap-quarterly-loss",
+    "source": "synthetic_regression",
+    "expected": {
+      "documentType": "earnings_release",
+      "period": "2026年3月期第2四半期",
+      "consolidated": true,
+      "metrics": {
+        "performance.sales": { "value": 8000000000, "unit": "JPY" },
+        "performance.operatingProfit": { "value": -500000000, "unit": "JPY" }
+      },
+      "warnings": ["下方修正"],
+      "referencePages": [1]
+    }
+  },
+  {
+    "id": "jgaap-thousand-yen-unit",
+    "source": "synthetic_regression",
+    "expected": {
+      "documentType": "earnings_release",
+      "period": "2026年3月期",
+      "consolidated": true,
+      "metrics": {
+        "performance.sales": { "value": 1500000000, "unit": "JPY" }
+      },
+      "warnings": [],
+      "referencePages": [1]
+    }
+  },
+  {
+    "id": "ifrs-revenue-profit",
+    "source": "synthetic_regression",
+    "expected": {
+      "documentType": "earnings_release",
+      "period": "2026年3月期第1四半期",
+      "consolidated": true,
+      "metrics": {
+        "performance.sales": { "value": 72000000000, "unit": "JPY" },
+        "performance.netProfit": { "value": 6400000000, "unit": "JPY" }
+      },
+      "warnings": [],
+      "referencePages": [1]
+    }
+  },
+  {
+    "id": "ambiguous-table-must-not-confirm",
+    "source": "synthetic_regression",
+    "expected": {
+      "documentType": "earnings_release",
+      "metrics": {},
+      "warnings": ["抽出品質が不十分"],
+      "referencePages": [1]
+    }
+  }
+]
