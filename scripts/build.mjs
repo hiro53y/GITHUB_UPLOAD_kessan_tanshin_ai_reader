@@ -7,6 +7,7 @@ import { createRequire } from "node:module";
 import { rollup } from "rollup";
 import commonjs from "@rollup/plugin-commonjs";
 import json from "@rollup/plugin-json";
+import terser from "@rollup/plugin-terser";
 import ts from "typescript";
 import postcss from "postcss";
 import tailwindcss from "tailwindcss";
@@ -86,7 +87,10 @@ function pdfWorkerUrlPlugin() {
     async load(id) {
       if (!id.startsWith("\0url:")) return null;
       const source = id.slice("\0url:".length).replace("?url", "");
-      const resolved = require.resolve(source);
+      let resolved = require.resolve(source);
+      // 同梱の圧縮版（pdf.worker.min.mjs）があればそちらを使う（約2.2MB → 約1MB）
+      const minified = resolved.replace(/\.worker\.mjs$/, ".worker.min.mjs");
+      if (minified !== resolved && existsSync(minified)) resolved = minified;
       const fileName = "pdf.worker.mjs";
       await mkdir(assets, { recursive: true });
       await copyFile(resolved, path.join(assets, fileName));
@@ -195,6 +199,8 @@ async function buildJs() {
     dir: dist,
     format: "es",
     sourcemap: false,
+    // 起動を速くするため圧縮する（KESSAN_NO_MINIFY=1 で無効化）
+    plugins: process.env.KESSAN_NO_MINIFY ? [] : [terser({ format: { comments: false }, compress: { passes: 2 } })],
     entryFileNames: "assets/app.js",
     chunkFileNames: "assets/[name]-[hash].js",
     assetFileNames: "assets/[name]-[hash][extname]"

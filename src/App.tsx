@@ -73,6 +73,46 @@ function makeManualDisclosure(input: { url?: string; fileName?: string; ticker?:
   };
 }
 
+// ---- くらしノート（Google Apps Script のWebアプリ）に埋め込んだときの連携 ----
+// ?embed=1&ticker=8306 で開くとその銘柄の最新決算短信を自動で取得する。
+// 親からの postMessage {type:'kurashi:ticker', ticker} で銘柄を切り替える。
+// 分析が終わったら、要約（公開情報の要約のみ）を親へ {type:'kessan:report', report} で送る。
+const EMBED_PARAMS = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : new URLSearchParams();
+const IS_EMBEDDED = EMBED_PARAMS.get("embed") === "1";
+
+function isTrustedParentOrigin(origin: string): boolean {
+  return (
+    /^https:\/\/([a-z0-9-]+\.)*googleusercontent\.com$/.test(origin) ||
+    origin === "https://script.google.com" ||
+    /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)
+  );
+}
+
+function notifyParent(message: unknown): void {
+  if (!IS_EMBEDDED || typeof window === "undefined" || window.parent === window) return;
+  try {
+    window.parent.postMessage(message, "*");
+  } catch {
+    // 親へ送れなくても本体の動作は続ける
+  }
+}
+
+function reportDigestForParent(report: AnalysisReport) {
+  const d = report.freeAiDigest;
+  return {
+    ticker: report.ticker || "",
+    companyName: report.companyName || "",
+    title: report.sourceDisclosure?.title || "",
+    disclosedAt: report.sourceDisclosure?.disclosedAt || "",
+    verdict: d?.verdict || "unknown",
+    verdictLabel: d?.verdictLabel || "",
+    headline: d?.headline || report.oneLineSummary || "",
+    goodPoints: (d?.goodPoints || []).slice(0, 5),
+    concernPoints: (d?.concernPoints || []).slice(0, 5),
+    keyFigures: (d?.keyFigures || []).slice(0, 6)
+  };
+}
+
 export default function App() {
   // useReducer による集中ステート管理。setter は既存ロジック互換のため shim 関数で残す。
   const [state, dispatch] = useReducer(
@@ -147,6 +187,27 @@ export default function App() {
     };
   }, []);
 
+  // 埋め込み時：URL の銘柄を自動で取得し、親からの銘柄の受け渡しを受け付ける
+  const analyzeTickerRef = useRef<(ticker: string) => void>(() => undefined);
+  useEffect(() => {
+    analyzeTickerRef.current = (ticker: string) => void handleAnalyzeTicker(ticker);
+  });
+  useEffect(() => {
+    if (!IS_EMBEDDED) return;
+    const ticker = EMBED_PARAMS.get("ticker");
+    if (ticker) analyzeTickerRef.current(ticker);
+    const onMessage = (event: MessageEvent) => {
+      if (!isTrustedParentOrigin(event.origin)) return;
+      const data = event.data as { type?: string; ticker?: string } | null;
+      if (data && data.type === "kurashi:ticker" && typeof data.ticker === "string" && data.ticker.trim()) {
+        analyzeTickerRef.current(data.ticker.trim());
+      }
+    };
+    window.addEventListener("message", onMessage);
+    notifyParent({ type: "app:ready" });
+    return () => window.removeEventListener("message", onMessage);
+  }, []);
+
   // アンマウント時に進行中のタイマー・非同期処理をクリーンアップ（StrictMode 二重マウント対応）
   useEffect(() => {
     return () => {
@@ -216,6 +277,7 @@ export default function App() {
     };
     const result = saveHistoryItem(item);
     setHistory(listHistory());
+    if (nextReport.ticker) notifyParent({ type: "kessan:report", report: reportDigestForParent(nextReport) });
     if (!result.ok) {
       notify(`履歴保存に失敗しました（容量不足）: ${result.error ?? "不明"}`);
     } else if (result.trimmed) {
